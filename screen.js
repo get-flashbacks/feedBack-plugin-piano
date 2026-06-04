@@ -835,10 +835,19 @@ function createFactory() {
         if (!_cfg.hitDetection) return;
         const cutoff = t - HIT_TOLERANCE - 0.05;
 
+        // Use same hand filter as hit detection and rendering —
+        // filtered-out notes can't be missed.
+        const _missHf = _cfg.handFilter;
+        const _missStfPass = (stf) => {
+            if (_missHf === 'both' || stf === undefined || stf === -1) return true;
+            return _missHf === 'rh' ? stf === 1 : stf === 0;
+        };
+
         if (notes) {
             for (const n of notes) {
                 if (n.t > cutoff) break;
                 if (n.t < cutoff - 2) continue;
+                if (!_missStfPass(n.stf)) continue;
                 const songMidi = noteToMidi(n.s, n.f);
                 const key = _noteKey(n.t, songMidi);
                 if (!_hitNoteKeys.has(key) && !_missedNoteKeys.has(key) && n.t < cutoff) {
@@ -851,6 +860,7 @@ function createFactory() {
                 if (c.t > cutoff) break;
                 if (c.t < cutoff - 2) continue;
                 for (const cn of (c.notes || [])) {
+                    if (!_missStfPass(cn.stf)) continue;
                     const songMidi = noteToMidi(cn.s, cn.f);
                     const key = _noteKey(c.t, songMidi);
                     if (!_hitNoteKeys.has(key) && !_missedNoteKeys.has(key) && c.t < cutoff) {
