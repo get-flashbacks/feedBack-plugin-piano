@@ -1986,4 +1986,13 @@ window.slopsmithViz_piano = createFactory;
 // slopsmith→feedBack rename: host viz picker looks up `window.feedBackViz_<id>`.
 window.feedBackViz_piano = window.slopsmithViz_piano;
 
+// Node-only export hook for tests; browsers keep the window.*Viz_piano wiring.
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        noteToMidi, midiToNoteName, isBlackKey, _neonRGB, _rgbStr,
+        _wafFile, _wafVar, _wafUrl, _midiResolveSaved,
+        matchesArrangement: createFactory.matchesArrangement,
+    };
+}
+
 })();
