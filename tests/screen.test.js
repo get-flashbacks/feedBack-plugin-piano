@@ -64,6 +64,52 @@ test('_midiResolveSaved matches by stored key first, falls back to legacy bare i
     assert.equal(mod._midiResolveSaved('', sources), null);
 });
 
+test('_computeOctaveShift is a no-op without a detected controller range', () => {
+    assert.equal(mod._computeOctaveShift(null, null, 48, 95), 0);
+    assert.equal(mod._computeOctaveShift(36, 60, null, null), 0);
+});
+
+test('_computeOctaveShift is a no-op when the controller already covers the display span', () => {
+    // 61-key controller (36..96) is wider than a 4-octave display window.
+    assert.equal(mod._computeOctaveShift(36, 96, 48, 95), 0);
+});
+
+test('_computeOctaveShift shifts a narrow low controller up to fit the display range', () => {
+    // 25-key controller starting at C2 (36..60), display range C3..B6 (48..95).
+    const shift = mod._computeOctaveShift(36, 60, 48, 95);
+    assert.equal(shift, 12);
+    assert.ok(36 + shift >= 48 && 60 + shift <= 95);
+});
+
+test('_computeOctaveShift shifts a narrow high controller down to fit the display range', () => {
+    // 25-key controller starting at C6 (84..108), display range C3..B6 (48..95).
+    const shift = mod._computeOctaveShift(84, 108, 48, 95);
+    assert.equal(shift, -24);
+    assert.ok(84 + shift >= 48 && 108 + shift <= 95);
+});
+
+test('_computeOctaveShift picks the smallest shift among equally-good fits', () => {
+    // A 12-key span fits with zero overflow at many multiples of an octave;
+    // the smallest absolute shift should win over an equally-valid larger one.
+    const shift = mod._computeOctaveShift(48, 59, 48, 95);
+    assert.equal(shift, 0);
+});
+
+test('_computeOctaveShift minimizes overflow when no shift fits fully', () => {
+    // Controller (0..20, 21 keys) is narrower than the display span (48..95,
+    // 48 semitones) but no whole-octave shift can land it fully inside —
+    // the best available shift should still land it as close as possible.
+    const shift = mod._computeOctaveShift(0, 20, 48, 95);
+    const lo = 0 + shift, hi = 20 + shift;
+    const overflow = Math.max(0, 48 - lo) + Math.max(0, hi - 95);
+    // No smaller-overflow shift should exist among whole octaves.
+    for (let oct = -8; oct <= 8; oct++) {
+        const s = oct * 12;
+        const altOverflow = Math.max(0, 48 - (0 + s)) + Math.max(0, (20 + s) - 95);
+        assert.ok(altOverflow >= overflow, `oct=${oct} beat the chosen shift`);
+    }
+});
+
 test('matchesArrangement rejects a falsy songInfo', () => {
     assert.equal(mod.matchesArrangement(null), false);
     assert.equal(mod.matchesArrangement(undefined), false);
