@@ -41,6 +41,13 @@ const KEYBOARD_H_FRAC = 0.15;
 const NOTE_LABEL_MIN_H = 16;
 const HIT_TOLERANCE = 0.10;        // seconds
 
+// Octave-fit lookahead windows. 'auto' reacts tightly since the shift is
+// applied instantly and in software; 'cue' looks further ahead to give a
+// player time to press their own hardware octave button before the notes
+// that need it actually arrive.
+const OCTAVE_AUTO_LOOKAHEAD_SEC = 0.5;
+const OCTAVE_CUE_LOOKAHEAD_SEC = 1.5;
+
 // ── Persisted settings ───────────────────────────────────────────────
 
 const STORE_KEYS = {
@@ -52,6 +59,7 @@ const STORE_KEYS = {
     showNoteNames: 'piano_note_names',
     hitDetection:  'piano_hit_detect',
     octaveFit:     'piano_octave_fit',
+    octaveMode:    'piano_octave_mode',
     controllerLo:  'piano_controller_lo',
     controllerHi:  'piano_controller_hi',
 };
@@ -75,13 +83,19 @@ const _cfg = {
     transpose:     parseInt(_readStore(STORE_KEYS.transpose) || '0'),
     showNoteNames: _readStore(STORE_KEYS.showNoteNames) !== 'false',
     hitDetection:  _readStore(STORE_KEYS.hitDetection) === 'true',
-    // Controller-fit: shifts incoming MIDI by whole octaves so a
-    // physically smaller keyboard (e.g. a 25/32-key controller) can
-    // still reach the full range of a song written for an 88-key
-    // range. controllerLo/Hi are captured via the "Detect range"
-    // flow (see _captureDetectNote) rather than typed in, since most
-    // players don't know their controller's exact MIDI note range.
+    // Controller-fit: continuously steers incoming MIDI by whole octaves
+    // so a physically smaller keyboard (e.g. a 25/32-key controller) can
+    // reach a song written across a wider range than the controller has
+    // keys for — the shift tracks the upcoming notes (_nearTermMidiRange),
+    // not a single fixed offset for the whole session, since a song's own
+    // range routinely exceeds what one static shift could ever cover.
+    // 'auto' applies the shift in software; 'cue' only displays it, for
+    // players who'd rather press their controller's own octave button.
+    // controllerLo/Hi are captured via the "Detect range" flow (see
+    // _captureDetectNote) rather than typed in, since most players don't
+    // know their controller's exact MIDI note range.
     octaveFit:     _readStore(STORE_KEYS.octaveFit) === 'true',
+    octaveMode:    _readStore(STORE_KEYS.octaveMode) === 'cue' ? 'cue' : 'auto',
     controllerLo:  _readIntOrNull(STORE_KEYS.controllerLo),
     controllerHi:  _readIntOrNull(STORE_KEYS.controllerHi),
 };
@@ -136,20 +150,25 @@ const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 
 function noteToMidi(string, fret) { return string * 24 + fret; }
 
 // Picks the whole-octave shift (multiple of 12 semitones) that best fits
-// the controller's playable range [controllerLo, controllerHi] inside the
-// song's currently displayed range [displayLo, displayHi]. Prefers a shift
-// that fits the controller fully inside the display range; when the
-// controller can't fully fit (it's narrower than the display span but
-// straddles an edge), picks the shift that minimizes how far it spills
-// past either edge, breaking ties toward the smallest absolute shift.
-function _computeOctaveShift(controllerLo, controllerHi, displayLo, displayHi) {
-    if (controllerLo == null || controllerHi == null || displayLo == null || displayHi == null) return 0;
-    if (controllerHi - controllerLo >= displayHi - displayLo) return 0;
+// the controller's playable range [controllerLo, controllerHi] against a
+// target note range [targetLo, targetHi] — the notes actually coming up,
+// not the whole song. Prefers a shift that lands the controller fully
+// around the target; when it can't (the target itself spans more than
+// the controller's key count), picks the shift that minimizes how far it
+// spills past either edge, breaking ties toward the smallest absolute
+// shift. Deliberately has no "controller is already wide enough, skip"
+// shortcut: a wide controller can still be sitting nowhere near the
+// notes that are about to play, and this runs continuously against a
+// short lookahead (see _nearTermMidiRange) rather than once against the
+// whole visible window, so that check would silently suppress shifts a
+// wide controller still needs.
+function _computeOctaveShift(controllerLo, controllerHi, targetLo, targetHi) {
+    if (controllerLo == null || controllerHi == null || targetLo == null || targetHi == null) return 0;
     let bestShift = 0, bestOverflow = Infinity, bestAbs = Infinity;
     for (let oct = -8; oct <= 8; oct++) {
         const shift = oct * 12;
         const lo = controllerLo + shift, hi = controllerHi + shift;
-        const overflow = Math.max(0, displayLo - lo) + Math.max(0, hi - displayHi);
+        const overflow = Math.max(0, targetLo - lo) + Math.max(0, hi - targetHi);
         const abs = Math.abs(shift);
         if (overflow < bestOverflow || (overflow === bestOverflow && abs < bestAbs)) {
             bestOverflow = overflow;
@@ -158,6 +177,37 @@ function _computeOctaveShift(controllerLo, controllerHi, displayLo, displayHi) {
         }
     }
     return bestShift;
+}
+
+// Range of song notes due within [t, t + lookaheadSec] — a short forward
+// window used to continuously steer the octave shift, as opposed to
+// detectRange/_visibleMidiRange which describe the whole rendered highway.
+// A tight lookahead is what makes the shift actually follow the melody
+// instead of trying (and failing) to fit the entire song under one shift.
+function _nearTermMidiRange(notes, chords, t, lookaheadSec) {
+    let lo = 127, hi = 0;
+    const tMax = t + lookaheadSec;
+    if (notes) {
+        for (const n of notes) {
+            if (n.t < t - 0.1) continue;
+            if (n.t > tMax) break;
+            const m = noteToMidi(n.s, n.f);
+            if (m < lo) lo = m;
+            if (m > hi) hi = m;
+        }
+    }
+    if (chords) {
+        for (const c of chords) {
+            if (c.t < t - 0.1) continue;
+            if (c.t > tMax) break;
+            for (const cn of (c.notes || [])) {
+                const m = noteToMidi(cn.s, cn.f);
+                if (m < lo) lo = m;
+                if (m > hi) hi = m;
+            }
+        }
+    }
+    return lo <= hi ? { lo, hi } : null;
 }
 
 function midiToNoteName(midi) {
@@ -933,7 +983,11 @@ function createFactory() {
             return;
         }
 
-        const played = rawMidi + _cfg.transpose + (_cfg.octaveFit ? _octaveShift : 0);
+        // In 'cue' mode _octaveShift is still computed (for the on-highway
+        // indicator) but never applied — the player is expected to shift
+        // their own controller's octave, not have the software do it.
+        const appliedShift = (_cfg.octaveFit && _cfg.octaveMode === 'auto') ? _octaveShift : 0;
+        const played = rawMidi + _cfg.transpose + appliedShift;
         if (played < 0 || played > 127) return;
         _rawToPlayed.set(rawMidi, played);
         _heldNotes.set(played, velocity);
@@ -1371,6 +1425,11 @@ function createFactory() {
                         <input type="checkbox" class="piano-chk-octfit" ${_cfg.octaveFit ? 'checked' : ''}
                             style="accent-color:#f5a623;"> Fit my keyboard
                     </label>
+                    <select class="piano-octave-mode" style="background:#1a1a2e;border:1px solid #333;border-radius:6px;
+                        padding:2px 4px;font-size:10px;color:#ccc;outline:none;">
+                        <option value="auto"${_cfg.octaveMode === 'auto' ? ' selected' : ''}>Auto-shift</option>
+                        <option value="cue"${_cfg.octaveMode === 'cue' ? ' selected' : ''}>Cue only</option>
+                    </select>
                     <button class="piano-octave-detect" type="button" style="background:#1a1a2e;border:1px solid #333;
                         border-radius:6px;padding:2px 8px;font-size:10px;color:#ccc;cursor:pointer;">Detect range</button>
                     <span class="piano-octave-status" style="font-size:10px;color:#777;">${_detectStatusText()}</span>
@@ -1425,6 +1484,9 @@ function createFactory() {
         panel.querySelector('.piano-chk-octfit').onchange = function () {
             _saveCfg('octaveFit', this.checked);
         };
+        panel.querySelector('.piano-octave-mode').onchange = function () {
+            _saveCfg('octaveMode', this.value === 'cue' ? 'cue' : 'auto');
+        };
         panel.querySelector('.piano-octave-detect').onclick = function () {
             _detectStep = 'lo';
             _detectCaptureLo = null;
@@ -1473,7 +1535,18 @@ function createFactory() {
         }
         const lo = _displayLo;
         const hi = _displayHi;
-        _octaveShift = _cfg.octaveFit ? _computeOctaveShift(_cfg.controllerLo, _cfg.controllerHi, lo, hi) : 0;
+
+        // Continuously re-steer the shift from the notes actually coming
+        // up (not the whole rendered window) — see _nearTermMidiRange.
+        // During a rest with nothing in the lookahead, hold the last
+        // shift rather than snapping back to 0 mid-silence.
+        if (_cfg.octaveFit) {
+            const lookahead = _cfg.octaveMode === 'cue' ? OCTAVE_CUE_LOOKAHEAD_SEC : OCTAVE_AUTO_LOOKAHEAD_SEC;
+            const near = _nearTermMidiRange(notes, chords, t, lookahead);
+            if (near) _octaveShift = _computeOctaveShift(_cfg.controllerLo, _cfg.controllerHi, near.lo, near.hi);
+        } else {
+            _octaveShift = 0;
+        }
 
         const kbH = H * KEYBOARD_H_FRAC;
         const kbTop = H - kbH;
@@ -1536,14 +1609,15 @@ function createFactory() {
 
         if (_cfg.octaveFit && _octaveShift !== 0) {
             const octaves = _octaveShift / 12;
+            const octLabel = `${octaves > 0 ? '+' : ''}${octaves} 8ve${Math.abs(octaves) > 1 ? 's' : ''}`;
+            const msg = _cfg.octaveMode === 'cue'
+                ? `⇧ shift ${octLabel} now to match this passage`
+                : `⇧ auto-shifted ${octLabel} to match this passage`;
             ctx.fillStyle = '#f5a623cc';
             ctx.font = '10px sans-serif';
             ctx.textAlign = 'left';
             ctx.textBaseline = 'top';
-            ctx.fillText(
-                `⇧ shifted ${octaves > 0 ? '+' : ''}${octaves} 8ve${Math.abs(octaves) > 1 ? 's' : ''} to fit your keyboard`,
-                padL, 4
-            );
+            ctx.fillText(msg, padL, 4);
         }
 
         // MIDI indicator — show on the focused panel only; non-focused
@@ -2125,7 +2199,7 @@ window.feedBackViz_piano = window.slopsmithViz_piano;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         noteToMidi, midiToNoteName, isBlackKey, _neonRGB, _rgbStr,
-        _wafFile, _wafVar, _wafUrl, _midiResolveSaved, _computeOctaveShift,
+        _wafFile, _wafVar, _wafUrl, _midiResolveSaved, _computeOctaveShift, _nearTermMidiRange,
         matchesArrangement: createFactory.matchesArrangement,
     };
 }

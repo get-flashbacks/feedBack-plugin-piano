@@ -64,28 +64,35 @@ test('_midiResolveSaved matches by stored key first, falls back to legacy bare i
     assert.equal(mod._midiResolveSaved('', sources), null);
 });
 
-test('_computeOctaveShift is a no-op without a detected controller range', () => {
+test('_computeOctaveShift is a no-op without a detected controller range or target', () => {
     assert.equal(mod._computeOctaveShift(null, null, 48, 95), 0);
     assert.equal(mod._computeOctaveShift(36, 60, null, null), 0);
 });
 
-test('_computeOctaveShift is a no-op when the controller already covers the display span', () => {
-    // 61-key controller (36..96) is wider than a 4-octave display window.
-    assert.equal(mod._computeOctaveShift(36, 96, 48, 95), 0);
+function _bestOctaveOverflow(controllerLo, controllerHi, targetLo, targetHi) {
+    let best = Infinity;
+    for (let oct = -8; oct <= 8; oct++) {
+        const s = oct * 12;
+        const overflow = Math.max(0, targetLo - (controllerLo + s)) + Math.max(0, (controllerHi + s) - targetHi);
+        if (overflow < best) best = overflow;
+    }
+    return best;
+}
+
+test('_computeOctaveShift shifts a narrow low controller up toward a higher target passage', () => {
+    // 25-key controller starting at C2 (36..60), upcoming passage sits at C6..B6 (84..95).
+    const shift = mod._computeOctaveShift(36, 60, 84, 95);
+    assert.ok(shift > 0, 'should shift upward toward the higher passage');
+    const overflow = Math.max(0, 84 - (36 + shift)) + Math.max(0, (60 + shift) - 95);
+    assert.equal(overflow, _bestOctaveOverflow(36, 60, 84, 95));
 });
 
-test('_computeOctaveShift shifts a narrow low controller up to fit the display range', () => {
-    // 25-key controller starting at C2 (36..60), display range C3..B6 (48..95).
-    const shift = mod._computeOctaveShift(36, 60, 48, 95);
-    assert.equal(shift, 12);
-    assert.ok(36 + shift >= 48 && 60 + shift <= 95);
-});
-
-test('_computeOctaveShift shifts a narrow high controller down to fit the display range', () => {
-    // 25-key controller starting at C6 (84..108), display range C3..B6 (48..95).
-    const shift = mod._computeOctaveShift(84, 108, 48, 95);
-    assert.equal(shift, -24);
-    assert.ok(84 + shift >= 48 && 108 + shift <= 95);
+test('_computeOctaveShift shifts a narrow high controller down toward a lower target passage', () => {
+    // 25-key controller starting at C6 (84..108), upcoming passage sits at C2..C3 (36..48).
+    const shift = mod._computeOctaveShift(84, 108, 36, 48);
+    assert.ok(shift < 0, 'should shift downward toward the lower passage');
+    const overflow = Math.max(0, 36 - (84 + shift)) + Math.max(0, (108 + shift) - 48);
+    assert.equal(overflow, _bestOctaveOverflow(84, 108, 36, 48));
 });
 
 test('_computeOctaveShift picks the smallest shift among equally-good fits', () => {
@@ -95,8 +102,21 @@ test('_computeOctaveShift picks the smallest shift among equally-good fits', () 
     assert.equal(shift, 0);
 });
 
+test('_computeOctaveShift has no "wide controller, skip" shortcut — a wide but misplaced controller still shifts', () => {
+    // Regression test: an earlier version short-circuited to 0 whenever the
+    // controller's span was >= the target's span, on the theory that a wide
+    // controller "already covers" the song. That's wrong once the target is a
+    // short near-term lookahead rather than the whole song: a 61-key
+    // controller sitting at C2..C6 (36..84, span 48) is plenty wide, but if
+    // the very next notes are up at C7..C8 (96..108, span 12) it still needs
+    // a shift — span comparison alone can't tell you it's positioned wrong.
+    const shift = mod._computeOctaveShift(36, 84, 96, 108);
+    assert.notEqual(shift, 0);
+    assert.ok(36 + shift <= 108 && 84 + shift >= 96, 'shifted controller should overlap the target passage');
+});
+
 test('_computeOctaveShift minimizes overflow when no shift fits fully', () => {
-    // Controller (0..20, 21 keys) is narrower than the display span (48..95,
+    // Controller (0..20, 21 keys) is narrower than the target span (48..95,
     // 48 semitones) but no whole-octave shift can land it fully inside —
     // the best available shift should still land it as close as possible.
     const shift = mod._computeOctaveShift(0, 20, 48, 95);
@@ -108,6 +128,28 @@ test('_computeOctaveShift minimizes overflow when no shift fits fully', () => {
         const altOverflow = Math.max(0, 48 - (0 + s)) + Math.max(0, (20 + s) - 95);
         assert.ok(altOverflow >= overflow, `oct=${oct} beat the chosen shift`);
     }
+});
+
+test('_nearTermMidiRange only considers notes within the lookahead window', () => {
+    const notes = [
+        { t: 0.0, s: 0, f: 0 },   // midi 0, before the window start (t=1 - 0.1 slack = 0.9) -> excluded
+        { t: 1.0, s: 2, f: 0 },   // midi 48, inside [1.0, 2.0]
+        { t: 1.9, s: 3, f: 0 },   // midi 72, inside
+        { t: 2.5, s: 5, f: 0 },   // midi 120, after the window -> excluded
+    ];
+    const range = mod._nearTermMidiRange(notes, null, 1.0, 1.0);
+    assert.deepEqual(range, { lo: 48, hi: 72 });
+});
+
+test('_nearTermMidiRange returns null when nothing falls in the lookahead (a rest)', () => {
+    const notes = [{ t: 10.0, s: 2, f: 0 }];
+    assert.equal(mod._nearTermMidiRange(notes, null, 0.0, 1.0), null);
+});
+
+test('_nearTermMidiRange considers chord notes too', () => {
+    const chords = [{ t: 1.0, notes: [{ s: 1, f: 0 }, { s: 4, f: 0 }] }]; // midi 24, midi 96
+    const range = mod._nearTermMidiRange(null, chords, 1.0, 0.5);
+    assert.deepEqual(range, { lo: 24, hi: 96 });
 });
 
 test('matchesArrangement rejects a falsy songInfo', () => {
