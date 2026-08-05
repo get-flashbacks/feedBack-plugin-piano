@@ -1601,6 +1601,8 @@ function createFactory() {
         }
 
         const restoreSettingsPanel = _settingsVisible;
+        const restoreDetectStep = _detectStep;
+        const restoreDetectCaptureLo = _detectCaptureLo;
         if (_highwayCanvas) _highwayCanvas.style.visibility = _prevHighwayDisplay;
         if (_pianoCanvas) {
             _pianoCanvas.remove();
@@ -1628,6 +1630,9 @@ function createFactory() {
         if (restoreSettingsPanel) {
             _settingsVisible = true;
             _createSettingsPanel();
+            _detectStep = restoreDetectStep;
+            _detectCaptureLo = restoreDetectCaptureLo;
+            _updateDetectStatus();
         }
         _setChromeVisible(_chromeVisible);
         _applyCanvasDims();
