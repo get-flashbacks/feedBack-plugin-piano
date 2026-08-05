@@ -34,7 +34,25 @@ function createElement(tagName, ownerDocument) {
         type: '',
         title: '',
         textContent: '',
-        innerHTML: '',
+        _innerHTML: '',
+        _classLookup: new Map(),
+        get innerHTML() { return this._innerHTML; },
+        set innerHTML(value) {
+            this._innerHTML = String(value);
+            this._classLookup.clear();
+            const classNames = this._innerHTML.match(/class="([^"]+)"/g) || [];
+            for (const raw of classNames) {
+                for (const cls of raw.slice(7, -1).split(/\s+/).filter(Boolean)) {
+                    if (!this._classLookup.has(cls)) {
+                        const child = createElement('input', ownerDocument);
+                        child.className = cls;
+                        child.value = '';
+                        child.checked = false;
+                        this._classLookup.set(cls, child);
+                    }
+                }
+            }
+        },
         onclick: null,
         attributes: {},
         appendChild(child) {
@@ -63,7 +81,10 @@ function createElement(tagName, ownerDocument) {
             if (selector === ':scope > button') return this.children.filter(c => c.tagName === 'BUTTON');
             return [];
         },
-        querySelector() { return null; },
+        querySelector(selector) {
+            if (selector && selector.startsWith('.')) return this._classLookup.get(selector.slice(1)) || null;
+            return null;
+        },
         getContext(type) {
             if (tagName !== 'canvas' || type !== '2d') return null;
             return {
@@ -93,6 +114,19 @@ function createDocument() {
         createElement(tag) { return createElement(tag, doc); },
         getElementById(id) { return this.elementsById[id] || null; },
         querySelector() { return null; },
+        querySelectorAll(selector) {
+            if (!selector || !selector.startsWith('.')) return [];
+            const cls = selector.slice(1);
+            const out = [];
+            const visit = (el) => {
+                if (!el) return;
+                if (String(el.className || '').split(/\s+/).includes(cls)) out.push(el);
+                for (const child of el.children || []) visit(child);
+                for (const child of el._classLookup ? el._classLookup.values() : []) visit(child);
+            };
+            for (const el of Object.values(this.elementsById)) visit(el);
+            return out;
+        },
         addEventListener(type, fn) {
             if (!this.listeners.has(type)) this.listeners.set(type, new Set());
             this.listeners.get(type).add(fn);
@@ -105,6 +139,7 @@ function createDocument() {
     const player = doc.createElement('div');
     player.clientWidth = 640;
     player.clientHeight = 360;
+    doc.head = doc.createElement('head');
     const controls = doc.createElement('div');
     controls.clientWidth = 640;
     controls.clientHeight = 48;
