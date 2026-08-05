@@ -873,6 +873,7 @@ function createFactory() {
     let _settingsGear = null;
     let _settingsVisible = false;
     let _hostEventsSubscribed = false;
+    let _hostEventBackend = null;
     let _chromeVisible = true;
 
     // MIDI held / sustain state — per-instance so each panel's
@@ -919,6 +920,7 @@ function createFactory() {
     // the user sees.
     let _latestNotes = null, _latestChords = null, _latestTime = 0;
     let _latestBundle = null;
+    let _initFrameId = 0;
     let _renderFrameId = 0;
 
     // Wave C: replace the module-level `song:ready` subscription
@@ -1526,24 +1528,32 @@ function createFactory() {
             typeof window.feedBack.off === 'function');
     }
 
-    function _hostEventOn(name, fn) {
+    function _selectHostEventBackend() {
         if (_hostEventsUseFeedBack()) {
-            window.feedBack.on(name, fn);
+            return { type: 'feedBack', target: window.feedBack };
+        }
+        return { type: 'window', target: window };
+    }
+
+    function _hostEventOn(name, fn) {
+        if (_hostEventBackend && _hostEventBackend.type === 'feedBack') {
+            _hostEventBackend.target.on(name, fn);
             return;
         }
-        window.addEventListener(name, fn);
+        (_hostEventBackend ? _hostEventBackend.target : window).addEventListener(name, fn);
     }
 
     function _hostEventOff(name, fn) {
-        if (_hostEventsUseFeedBack()) {
-            window.feedBack.off(name, fn);
+        if (_hostEventBackend && _hostEventBackend.type === 'feedBack') {
+            _hostEventBackend.target.off(name, fn);
             return;
         }
-        window.removeEventListener(name, fn);
+        (_hostEventBackend ? _hostEventBackend.target : window).removeEventListener(name, fn);
     }
 
     function _subscribeHostEvents() {
         if (_hostEventsSubscribed) return;
+        _hostEventBackend = _selectHostEventBackend();
         _hostEventsSubscribed = true;
         _hostEventOn('highway:canvas-replaced', _onHostCanvasReplaced);
         _hostEventOn('highway:visibility', _onHostVisibility);
@@ -1554,6 +1564,7 @@ function createFactory() {
         _hostEventsSubscribed = false;
         _hostEventOff('highway:canvas-replaced', _onHostCanvasReplaced);
         _hostEventOff('highway:visibility', _onHostVisibility);
+        _hostEventBackend = null;
     }
 
     function _eventDetail(ev) {
@@ -1641,6 +1652,12 @@ function createFactory() {
         if (!_renderFrameId) return;
         cancelAnimationFrame(_renderFrameId);
         _renderFrameId = 0;
+    }
+
+    function _stopInitFrame() {
+        if (!_initFrameId) return;
+        cancelAnimationFrame(_initFrameId);
+        _initFrameId = 0;
     }
 
     function _renderLatestBundle() {
@@ -2104,6 +2121,7 @@ function createFactory() {
     // ── Teardown ──
 
     function _teardown() {
+        _stopInitFrame();
         _stopRenderLoop();
 
         if (_pianoCanvas) {
@@ -2236,7 +2254,8 @@ function createFactory() {
                 _applyCanvasDims();
             };
             _resyncFromHost();
-            requestAnimationFrame(() => {
+            _initFrameId = requestAnimationFrame(() => {
+                _initFrameId = 0;
                 // Bail if a teardown happened before the frame fired.
                 if (!_pianoCanvas || !_pianoCtx) return;
                 _resyncFromHost();
