@@ -846,7 +846,12 @@ function _ssIsCanvasFocused(highwayCanvas) {
 
 // ═══════════════════════════════════════════════════════════════════════
 // Factory — slopsmith#36 setRenderer contract (multi-instance)
-// ═══════════════════════════════════════════════════════════════════════
+/**
+ * Creates an independent piano visualization renderer instance.
+ *
+ * @return {Object} A renderer with lifecycle, drawing, resizing, destruction,
+ * MIDI note handling, sustain, and held-note release methods.
+ */
 
 function createFactory() {
     const _instanceId = ++_nextInstanceId;
@@ -1300,7 +1305,10 @@ function createFactory() {
         _controlsAnchor = null;
     }
 
-    // ── Settings panel + gear button (per-instance) ──
+    /**
+     * Retrieves the player control slot for the v3 player interface.
+     * @return {HTMLElement|null} The player control slot, or `null` when unavailable.
+     */
 
     function _v3PlayerControlSlot() {
         const ui = window.feedBack && window.feedBack.ui;
@@ -1311,6 +1319,9 @@ function createFactory() {
         return null;
     }
 
+    /**
+     * Adds the piano settings button to the appropriate player controls area.
+     */
     function _injectSettingsGear() {
         if (_settingsGear) return;
         const v3Slot = _v3PlayerControlSlot();
@@ -1513,6 +1524,9 @@ function createFactory() {
         };
     }
 
+    /**
+     * Removes the settings panel and resets its visibility and controller-detection state.
+     */
     function _removeSettingsPanel() {
         if (_settingsPanel) {
             _settingsPanel.remove();
@@ -1522,12 +1536,20 @@ function createFactory() {
         _detectStep = 'idle';
     }
 
+    /**
+     * Determines whether the host provides the `feedBack` event interface.
+     * @return {boolean} `true` if `window.feedBack` provides `on` and `off` functions, `false` otherwise.
+     */
     function _hostEventsUseFeedBack() {
         return !!(window.feedBack &&
             typeof window.feedBack.on === 'function' &&
             typeof window.feedBack.off === 'function');
     }
 
+    /**
+     * Selects the available host event backend.
+     * @return {{type: string, target: object}} The host event backend type and event target.
+     */
     function _selectHostEventBackend() {
         if (_hostEventsUseFeedBack()) {
             return { type: 'feedBack', target: window.feedBack };
@@ -1535,6 +1557,11 @@ function createFactory() {
         return { type: 'window', target: window };
     }
 
+    /**
+     * Registers an event listener with the configured host event backend.
+     * @param {string} name - The event name.
+     * @param {Function} fn - The event listener callback.
+     */
     function _hostEventOn(name, fn) {
         if (_hostEventBackend && _hostEventBackend.type === 'feedBack') {
             _hostEventBackend.target.on(name, fn);
@@ -1543,6 +1570,11 @@ function createFactory() {
         (_hostEventBackend ? _hostEventBackend.target : window).addEventListener(name, fn);
     }
 
+    /**
+     * Unregister a host event handler.
+     * @param {string} name - The event name.
+     * @param {Function} fn - The handler to remove.
+     */
     function _hostEventOff(name, fn) {
         if (_hostEventBackend && _hostEventBackend.type === 'feedBack') {
             _hostEventBackend.target.off(name, fn);
@@ -1551,6 +1583,9 @@ function createFactory() {
         (_hostEventBackend ? _hostEventBackend.target : window).removeEventListener(name, fn);
     }
 
+    /**
+     * Subscribe the renderer instance to host canvas replacement and visibility events.
+     */
     function _subscribeHostEvents() {
         if (_hostEventsSubscribed) return;
         _hostEventBackend = _selectHostEventBackend();
@@ -1559,6 +1594,9 @@ function createFactory() {
         _hostEventOn('highway:visibility', _onHostVisibility);
     }
 
+    /**
+     * Unsubscribes the instance from host canvas replacement and visibility events.
+     */
     function _unsubscribeHostEvents() {
         if (!_hostEventsSubscribed) return;
         _hostEventsSubscribed = false;
@@ -1567,24 +1605,48 @@ function createFactory() {
         _hostEventBackend = null;
     }
 
+    /**
+     * Extract event detail or use the event value itself.
+     * @param {Object} ev - The event or event detail source.
+     * @return {Object} The event detail, event value, or an empty object.
+     */
     function _eventDetail(ev) {
         return (ev && ev.detail) || ev || {};
     }
 
+    /**
+     * Retrieves the canvas element from a host event detail object.
+     * @param {Object} detail - Event details that may contain a canvas element.
+     * @return {?HTMLCanvasElement} The canvas element, or `null` if none is provided.
+     */
     function _eventCanvas(detail) {
         return detail.canvas || detail.highwayCanvas || detail.newCanvas || detail.targetCanvas || null;
     }
 
+    /**
+     * Retrieves the canvas replaced by a host canvas event.
+     * @param {Object} detail - Event details containing the previous canvas reference.
+     * @return {HTMLCanvasElement|null} The previous canvas, or `null` when none is provided.
+     */
     function _eventOldCanvas(detail) {
         return detail.oldCanvas || detail.previousCanvas || detail.prevCanvas || null;
     }
 
+    /**
+     * Determines whether a host event applies to this renderer's canvas.
+     * @param {Object} detail - Event details containing the current or previous canvas.
+     * @return {boolean} `true` if the event targets this canvas or has no canvas specified, `false` otherwise.
+     */
     function _eventTargetsThisCanvas(detail) {
         const canvas = _eventCanvas(detail);
         const oldCanvas = _eventOldCanvas(detail);
         return (!canvas && !oldCanvas) || canvas === _highwayCanvas || oldCanvas === _highwayCanvas;
     }
 
+    /**
+     * Controls the visibility of the piano visualization and its settings controls.
+     * @param {boolean} visible - Whether the visualization chrome should be visible.
+     */
     function _setChromeVisible(visible) {
         _chromeVisible = !!visible;
         if (_pianoCanvas) _pianoCanvas.style.display = _chromeVisible ? '' : 'none';
@@ -1594,6 +1656,10 @@ function createFactory() {
         }
     }
 
+    /**
+     * Rebuilds the piano overlay and related controls for a replacement highway canvas.
+     * @param {HTMLCanvasElement|null} nextCanvas - The canvas to use as the new highway canvas.
+     */
     function _rebuildOverlayForCanvas(nextCanvas) {
         if (!nextCanvas || nextCanvas === _highwayCanvas) {
             _applyCanvasDims();
@@ -1638,6 +1704,10 @@ function createFactory() {
         _applyCanvasDims();
     }
 
+    /**
+     * Rebuilds the visualization overlay when its host canvas is replaced.
+     * @param {Event} ev - The canvas replacement event.
+     */
     function _handleHostCanvasReplaced(ev) {
         if (!_isReady) return;
         const detail = _eventDetail(ev);
@@ -1645,6 +1715,10 @@ function createFactory() {
         _rebuildOverlayForCanvas(_eventCanvas(detail));
     }
 
+    /**
+     * Updates the plugin controls' visibility when the host canvas visibility changes.
+     * @param {Event} ev - The host visibility event.
+     */
     function _handleHostVisibility(ev) {
         if (!_isReady) return;
         const detail = _eventDetail(ev);
@@ -1653,18 +1727,29 @@ function createFactory() {
         else if (typeof detail.hidden === 'boolean') _setChromeVisible(!detail.hidden);
     }
 
+    /**
+     * Stops the active rendering loop.
+     */
     function _stopRenderLoop() {
         if (!_renderFrameId) return;
         cancelAnimationFrame(_renderFrameId);
         _renderFrameId = 0;
     }
 
+    /**
+     * Cancels the pending initialization animation frame.
+     */
     function _stopInitFrame() {
         if (!_initFrameId) return;
         cancelAnimationFrame(_initFrameId);
         _initFrameId = 0;
     }
 
+    /**
+     * Renders the latest chart bundle when the renderer is ready.
+     *
+     * Clears the piano canvas while the chart is unavailable and resets chart-specific state when the bundle becomes ready.
+     */
     function _renderLatestBundle() {
         if (!_isReady || !_latestBundle) return;
 
@@ -1687,6 +1772,9 @@ function createFactory() {
         _draw(_latestBundle.notes, _latestBundle.chords, _latestBundle.currentTime, _latestBundle.beats);
     }
 
+    /**
+     * Renders the latest visualization bundle and schedules the next animation frame while rendering is active.
+     */
     function _renderLoop() {
         _renderFrameId = 0;
         if (!_isReady || !_latestBundle) return;
@@ -1699,7 +1787,13 @@ function createFactory() {
         _renderFrameId = requestAnimationFrame(_renderLoop);
     }
 
-    // ── Drawing ──
+    /**
+     * Renders the piano visualization for the current playback position.
+     * @param {Array} notes - Notes visible around the current playback position.
+     * @param {Array} chords - Chords visible around the current playback position.
+     * @param {number} t - Current playback time in seconds.
+     * @param {Array} beats - Beat and measure markers to display.
+     */
 
     function _draw(notes, chords, t, beats) {
         if (!_pianoCanvas || !_pianoCtx) return;
@@ -2123,7 +2217,9 @@ function createFactory() {
         ctx.fillText(text, W / 2, hudY + hudH / 2);
     }
 
-    // ── Teardown ──
+    /**
+     * Tears down the renderer instance and restores the host page to its previous state.
+     */
 
     function _teardown() {
         _stopInitFrame();
