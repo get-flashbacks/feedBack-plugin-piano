@@ -872,6 +872,8 @@ function createFactory() {
     let _settingsPanel = null;
     let _settingsGear = null;
     let _settingsVisible = false;
+    let _hostEventsSubscribed = false;
+    let _chromeVisible = true;
 
     // MIDI held / sustain state — per-instance so each panel's
     // keyboard only shows the keys ITS user is holding, not
@@ -929,6 +931,8 @@ function createFactory() {
     // ── Listener refs (per-instance so destroy() detach matches) ──
     const _onWinResize = () => _applyCanvasDims();
     const _onFocusChange = () => _updateFocusState();
+    const _onHostCanvasReplaced = (ev) => _handleHostCanvasReplaced(ev);
+    const _onHostVisibility = (ev) => _handleHostVisibility(ev);
 
     // ── Focus management ──
     //
@@ -1503,6 +1507,111 @@ function createFactory() {
         _detectStep = 'idle';
     }
 
+    function _hostEventOn(name, fn) {
+        if (window.feedBack && typeof window.feedBack.on === 'function') {
+            window.feedBack.on(name, fn);
+            return;
+        }
+        window.addEventListener(name, fn);
+    }
+
+    function _hostEventOff(name, fn) {
+        if (window.feedBack && typeof window.feedBack.off === 'function') {
+            window.feedBack.off(name, fn);
+        }
+        window.removeEventListener(name, fn);
+    }
+
+    function _subscribeHostEvents() {
+        if (_hostEventsSubscribed) return;
+        _hostEventsSubscribed = true;
+        _hostEventOn('highway:canvas-replaced', _onHostCanvasReplaced);
+        _hostEventOn('highway:visibility', _onHostVisibility);
+    }
+
+    function _unsubscribeHostEvents() {
+        if (!_hostEventsSubscribed) return;
+        _hostEventsSubscribed = false;
+        _hostEventOff('highway:canvas-replaced', _onHostCanvasReplaced);
+        _hostEventOff('highway:visibility', _onHostVisibility);
+    }
+
+    function _eventDetail(ev) {
+        return (ev && ev.detail) || ev || {};
+    }
+
+    function _eventCanvas(detail) {
+        return detail.canvas || detail.highwayCanvas || detail.newCanvas || detail.targetCanvas || null;
+    }
+
+    function _eventOldCanvas(detail) {
+        return detail.oldCanvas || detail.previousCanvas || detail.prevCanvas || null;
+    }
+
+    function _eventTargetsThisCanvas(detail) {
+        const canvas = _eventCanvas(detail);
+        const oldCanvas = _eventOldCanvas(detail);
+        return (!canvas && !oldCanvas) || canvas === _highwayCanvas || oldCanvas === _highwayCanvas;
+    }
+
+    function _setChromeVisible(visible) {
+        _chromeVisible = !!visible;
+        if (_pianoCanvas) _pianoCanvas.style.display = _chromeVisible ? '' : 'none';
+        if (_settingsGear) _settingsGear.style.display = _chromeVisible ? '' : 'none';
+        if (_settingsPanel) {
+            _settingsPanel.style.display = (_chromeVisible && _settingsVisible) ? '' : 'none';
+        }
+    }
+
+    function _rebuildOverlayForCanvas(nextCanvas) {
+        if (!nextCanvas || nextCanvas === _highwayCanvas) {
+            _applyCanvasDims();
+            return;
+        }
+
+        if (_highwayCanvas) _highwayCanvas.style.visibility = _prevHighwayDisplay;
+        if (_pianoCanvas) {
+            _pianoCanvas.remove();
+            _pianoCanvas = null;
+            _pianoCtx = null;
+        }
+        _removeSettingsPanel();
+        _removeSettingsGear();
+        _restoreControlsStyle();
+
+        _highwayCanvas = nextCanvas;
+        _prevHighwayDisplay = nextCanvas.style.visibility || '';
+        _pianoCanvas = _createOverlayCanvas();
+        if (!_pianoCanvas) return;
+        _pianoCtx = _pianoCanvas.getContext('2d');
+        if (!_pianoCtx) {
+            console.warn('[Piano] canvas-replaced: getContext("2d") returned null; aborting');
+            _pianoCanvas.remove();
+            _pianoCanvas = null;
+            return;
+        }
+
+        _highwayCanvas.style.visibility = 'hidden';
+        _injectSettingsGear();
+        _setChromeVisible(_chromeVisible);
+        _applyCanvasDims();
+    }
+
+    function _handleHostCanvasReplaced(ev) {
+        if (!_isReady) return;
+        const detail = _eventDetail(ev);
+        if (!_eventTargetsThisCanvas(detail)) return;
+        _rebuildOverlayForCanvas(_eventCanvas(detail));
+    }
+
+    function _handleHostVisibility(ev) {
+        if (!_isReady) return;
+        const detail = _eventDetail(ev);
+        if (!_eventTargetsThisCanvas(detail)) return;
+        if (typeof detail.visible === 'boolean') _setChromeVisible(detail.visible);
+        else if (typeof detail.hidden === 'boolean') _setChromeVisible(!detail.hidden);
+    }
+
     // ── Drawing ──
 
     function _draw(notes, chords, t, beats) {
@@ -1964,6 +2073,7 @@ function createFactory() {
     // ── Factory return: setRenderer contract ──
 
     const instance = {
+        contextType: '2d',
         init(canvas /* , bundle */) {
             // Defensive teardown if a prior init wasn't paired with
             // destroy. Remove listeners, restore canvas, release
@@ -1977,6 +2087,7 @@ function createFactory() {
             // ever running.
             if (_pianoCanvas || _isReady) {
                 window.removeEventListener('resize', _onWinResize);
+                _unsubscribeHostEvents();
                 const ss = window.slopsmithSplitscreen;
                 if (ss && typeof ss.offFocusChange === 'function') {
                     ss.offFocusChange(_onFocusChange);
@@ -1995,6 +2106,7 @@ function createFactory() {
             // updates. Set to true in destroy() above — without this
             // reset, _updateFocusState would permanently no-op.
             _instanceDestroyed = false;
+            _chromeVisible = true;
 
             _highwayCanvas = canvas;
             // Snapshot/restore via `visibility` (not `display`): the host's
@@ -2062,6 +2174,7 @@ function createFactory() {
                 _resyncFromHost();
             });
             window.addEventListener('resize', _onWinResize);
+            _subscribeHostEvents();
 
             const ss = window.slopsmithSplitscreen;
             // Subscribe only when BOTH on/offFocusChange exist on
@@ -2144,6 +2257,7 @@ function createFactory() {
             // missing offFocusChange call.
             _instanceDestroyed = true;
             window.removeEventListener('resize', _onWinResize);
+            _unsubscribeHostEvents();
             const ss = window.slopsmithSplitscreen;
             if (ss && typeof ss.offFocusChange === 'function') {
                 ss.offFocusChange(_onFocusChange);
