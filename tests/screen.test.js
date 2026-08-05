@@ -419,6 +419,34 @@ test('renderer lifecycle events register and remove through the feedBack backend
     assert.equal((listeners.get('highway:visibility') || new Set()).size, 0);
 });
 
+test('renderer lifecycle removes listeners from the subscribed backend if feedBack changes', () => {
+    const originalListeners = new Map();
+    const replacementListeners = new Map();
+    const createFeedBack = (listeners) => ({
+        on(type, fn) {
+            if (!listeners.has(type)) listeners.set(type, new Set());
+            listeners.get(type).add(fn);
+        },
+        off(type, fn) {
+            const set = listeners.get(type);
+            if (set) set.delete(fn);
+        },
+    });
+    const originalFeedBack = createFeedBack(originalListeners);
+    const { renderer } = initRendererWithHarness({ feedBack: originalFeedBack });
+
+    assert.equal((originalListeners.get('highway:canvas-replaced') || new Set()).size, 1);
+    assert.equal((originalListeners.get('highway:visibility') || new Set()).size, 1);
+
+    window.feedBack = createFeedBack(replacementListeners);
+    renderer.destroy();
+
+    assert.equal((originalListeners.get('highway:canvas-replaced') || new Set()).size, 0);
+    assert.equal((originalListeners.get('highway:visibility') || new Set()).size, 0);
+    assert.equal((replacementListeners.get('highway:canvas-replaced') || new Set()).size, 0);
+    assert.equal((replacementListeners.get('highway:visibility') || new Set()).size, 0);
+});
+
 test('renderer lifecycle falls back to window events unless feedBack has both on and off', () => {
     const feedBack = { on() { throw new Error('feedBack.on should not be used without off'); } };
     const { harness, renderer } = initRendererWithHarness({ feedBack });
@@ -543,4 +571,26 @@ test('destroy and defensive re-init clean up prior listeners and overlays', () =
     player.appendChild(thirdCanvas);
     window.dispatchEvent({ type: 'highway:canvas-replaced', detail: { oldCanvas: secondCanvas, canvas: thirdCanvas } });
     assert.equal(player.children.filter(el => el.className === 'piano-highway-canvas').length, 0, 'callbacks should stop after destroy');
+});
+
+test('destroy and defensive re-init cancel pending init animation frames', () => {
+    const { harness, renderer } = initRendererWithHarness();
+    const player = harness.doc.elementsById.player;
+    assert.equal(harness.rafs.size, 1, 'init should schedule one follow-up layout frame');
+
+    renderer.destroy();
+    assert.equal(harness.rafs.size, 0, 'destroy should cancel the pending init frame');
+
+    const canvas = harness.doc.createElement('canvas');
+    player.appendChild(canvas);
+    renderer.init(canvas);
+    assert.equal(harness.rafs.size, 1);
+
+    const secondCanvas = harness.doc.createElement('canvas');
+    player.appendChild(secondCanvas);
+    renderer.init(secondCanvas);
+    assert.equal(harness.rafs.size, 1, 're-init should cancel the old init frame before scheduling a new one');
+
+    renderer.destroy();
+    assert.equal(harness.rafs.size, 0);
 });
