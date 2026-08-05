@@ -385,6 +385,25 @@ function listenerCount(harness, type) {
     return (harness.windowListeners.get(type) || new Set()).size;
 }
 
+function openSettingsPanel(harness) {
+    const gear = harness.doc.elementsById['player-controls'].children.find(el => el.className.includes('btn-piano-settings'));
+    assert.ok(gear, 'settings gear should be mounted');
+    gear.onclick();
+    const panel = harness.doc.elementsById.player.children.find(el => el.className === 'piano-settings-panel');
+    assert.ok(panel, 'settings panel should be open');
+    return panel;
+}
+
+function replaceCanvas(harness, oldCanvas) {
+    const player = harness.doc.elementsById.player;
+    const next = harness.doc.createElement('canvas');
+    next.clientWidth = 640;
+    next.clientHeight = 360;
+    player.appendChild(next);
+    window.dispatchEvent({ type: 'highway:canvas-replaced', detail: { oldCanvas, canvas: next } });
+    return next;
+}
+
 test('renderer lifecycle events register and remove through the window backend', () => {
     const { harness, renderer } = initRendererWithHarness();
     assert.equal(listenerCount(harness, 'highway:canvas-replaced'), 1);
@@ -489,13 +508,11 @@ test('canvas replacement ignores unrelated canvases and rebuilds overlays for th
 test('canvas replacement preserves an open settings panel and closed-panel behavior', () => {
     const { harness, renderer, canvas } = initRendererWithHarness();
     const player = harness.doc.elementsById.player;
-    const gear = harness.doc.elementsById['player-controls'].children.find(el => el.className.includes('btn-piano-settings'));
-    assert.ok(gear, 'settings gear should be mounted');
-    gear.onclick();
+    const panel = openSettingsPanel(harness);
 
     let panels = player.children.filter(el => el.className === 'piano-settings-panel');
     assert.equal(panels.length, 1);
-    assert.equal(panels[0].style.display, '');
+    assert.equal(panel.style.display, '');
 
     const next = harness.doc.createElement('canvas');
     next.clientWidth = 640;
@@ -520,13 +537,43 @@ test('canvas replacement preserves an open settings panel and closed-panel behav
     renderer.destroy();
 });
 
+test('canvas replacement preserves range detection while waiting for the low key', () => {
+    const { harness, renderer, canvas } = initRendererWithHarness();
+    const panel = openSettingsPanel(harness);
+    panel.querySelector('.piano-octave-detect').onclick();
+    assert.equal(panel.querySelector('.piano-octave-status').textContent, 'Press your LOWEST key…');
+
+    replaceCanvas(harness, canvas);
+
+    const restoredPanel = harness.doc.elementsById.player.children.find(el => el.className === 'piano-settings-panel');
+    assert.equal(restoredPanel.querySelector('.piano-octave-status').textContent, 'Press your LOWEST key…');
+
+    renderer.destroy();
+});
+
+test('canvas replacement preserves range detection after capturing the low key', () => {
+    const { harness, renderer, canvas } = initRendererWithHarness();
+    const panel = openSettingsPanel(harness);
+    panel.querySelector('.piano-octave-detect').onclick();
+    renderer._handleNoteOn(48, 100);
+    assert.equal(panel.querySelector('.piano-octave-status').textContent, 'Now press your HIGHEST key…');
+
+    replaceCanvas(harness, canvas);
+
+    const restoredPanel = harness.doc.elementsById.player.children.find(el => el.className === 'piano-settings-panel');
+    assert.equal(restoredPanel.querySelector('.piano-octave-status').textContent, 'Now press your HIGHEST key…');
+    renderer._handleNoteOn(72, 100);
+    assert.equal(restoredPanel.querySelector('.piano-octave-status').textContent, 'Detected C3–C5 (25 keys)');
+
+    renderer.destroy();
+});
+
 test('visibility events hide and restore overlay chrome for targeted canvases only', () => {
     const { harness, renderer, canvas } = initRendererWithHarness();
     const player = harness.doc.elementsById.player;
     const overlay = player.children.find(el => el.className === 'piano-highway-canvas');
+    const panel = openSettingsPanel(harness);
     const gear = harness.doc.elementsById['player-controls'].children.find(el => el.className.includes('btn-piano-settings'));
-    gear.onclick();
-    const panel = player.children.find(el => el.className === 'piano-settings-panel');
 
     window.dispatchEvent({ type: 'highway:visibility', detail: { canvas, visible: false } });
     assert.equal(overlay.style.display, 'none');
