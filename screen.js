@@ -872,6 +872,9 @@ function createFactory() {
     let _settingsPanel = null;
     let _settingsGear = null;
     let _settingsVisible = false;
+    let _hostEventsSubscribed = false;
+    let _hostEventBackend = null;
+    let _chromeVisible = true;
 
     // MIDI held / sustain state — per-instance so each panel's
     // keyboard only shows the keys ITS user is holding, not
@@ -916,6 +919,9 @@ function createFactory() {
     // (async wrt draw) can score against the filter-aware chart
     // the user sees.
     let _latestNotes = null, _latestChords = null, _latestTime = 0;
+    let _latestBundle = null;
+    let _initFrameId = 0;
+    let _renderFrameId = 0;
 
     // Wave C: replace the module-level `song:ready` subscription
     // with a bundle.isReady edge-detect per-instance. The global
@@ -929,6 +935,8 @@ function createFactory() {
     // ── Listener refs (per-instance so destroy() detach matches) ──
     const _onWinResize = () => _applyCanvasDims();
     const _onFocusChange = () => _updateFocusState();
+    const _onHostCanvasReplaced = (ev) => _handleHostCanvasReplaced(ev);
+    const _onHostVisibility = (ev) => _handleHostVisibility(ev);
 
     // ── Focus management ──
     //
@@ -1294,9 +1302,20 @@ function createFactory() {
 
     // ── Settings panel + gear button (per-instance) ──
 
+    function _v3PlayerControlSlot() {
+        const ui = window.feedBack && window.feedBack.ui;
+        if (window.feedBack && window.feedBack.uiVersion === 'v3' &&
+                ui && typeof ui.playerControlSlot === 'function') {
+            return ui.playerControlSlot();
+        }
+        return null;
+    }
+
     function _injectSettingsGear() {
         if (_settingsGear) return;
+        const v3Slot = _v3PlayerControlSlot();
         const anchor = _ssSettingsAnchor(_highwayCanvas) ||
+                       v3Slot ||
                        document.getElementById('player-controls');
         if (!anchor) return;
 
@@ -1312,11 +1331,11 @@ function createFactory() {
         gear.appendChild(glyph);
         gear.onclick = _toggleSettings;
 
-        if (_ssActive()) {
-            // Splitscreen: append to the panel bar.
+        if (_ssActive() || v3Slot) {
+            // Splitscreen and v3: use the host-provided chrome slot directly.
             anchor.appendChild(gear);
         } else {
-            // Main-player: insert before the last direct-child button (✕ Close).
+            // Legacy main-player: insert before the last direct-child button (Close).
             // Use ':scope > button' to restrict to direct children — a plain
             // 'button:last-child' traverses the full subtree and can match a
             // nested button (e.g. inside #mixer-anchor) that is not a direct
@@ -1501,6 +1520,183 @@ function createFactory() {
         }
         _settingsVisible = false;
         _detectStep = 'idle';
+    }
+
+    function _hostEventsUseFeedBack() {
+        return !!(window.feedBack &&
+            typeof window.feedBack.on === 'function' &&
+            typeof window.feedBack.off === 'function');
+    }
+
+    function _selectHostEventBackend() {
+        if (_hostEventsUseFeedBack()) {
+            return { type: 'feedBack', target: window.feedBack };
+        }
+        return { type: 'window', target: window };
+    }
+
+    function _hostEventOn(name, fn) {
+        if (_hostEventBackend && _hostEventBackend.type === 'feedBack') {
+            _hostEventBackend.target.on(name, fn);
+            return;
+        }
+        (_hostEventBackend ? _hostEventBackend.target : window).addEventListener(name, fn);
+    }
+
+    function _hostEventOff(name, fn) {
+        if (_hostEventBackend && _hostEventBackend.type === 'feedBack') {
+            _hostEventBackend.target.off(name, fn);
+            return;
+        }
+        (_hostEventBackend ? _hostEventBackend.target : window).removeEventListener(name, fn);
+    }
+
+    function _subscribeHostEvents() {
+        if (_hostEventsSubscribed) return;
+        _hostEventBackend = _selectHostEventBackend();
+        _hostEventsSubscribed = true;
+        _hostEventOn('highway:canvas-replaced', _onHostCanvasReplaced);
+        _hostEventOn('highway:visibility', _onHostVisibility);
+    }
+
+    function _unsubscribeHostEvents() {
+        if (!_hostEventsSubscribed) return;
+        _hostEventsSubscribed = false;
+        _hostEventOff('highway:canvas-replaced', _onHostCanvasReplaced);
+        _hostEventOff('highway:visibility', _onHostVisibility);
+        _hostEventBackend = null;
+    }
+
+    function _eventDetail(ev) {
+        return (ev && ev.detail) || ev || {};
+    }
+
+    function _eventCanvas(detail) {
+        return detail.canvas || detail.highwayCanvas || detail.newCanvas || detail.targetCanvas || null;
+    }
+
+    function _eventOldCanvas(detail) {
+        return detail.oldCanvas || detail.previousCanvas || detail.prevCanvas || null;
+    }
+
+    function _eventTargetsThisCanvas(detail) {
+        const canvas = _eventCanvas(detail);
+        const oldCanvas = _eventOldCanvas(detail);
+        return (!canvas && !oldCanvas) || canvas === _highwayCanvas || oldCanvas === _highwayCanvas;
+    }
+
+    function _setChromeVisible(visible) {
+        _chromeVisible = !!visible;
+        if (_pianoCanvas) _pianoCanvas.style.display = _chromeVisible ? '' : 'none';
+        if (_settingsGear) _settingsGear.style.display = _chromeVisible ? '' : 'none';
+        if (_settingsPanel) {
+            _settingsPanel.style.display = (_chromeVisible && _settingsVisible) ? '' : 'none';
+        }
+    }
+
+    function _rebuildOverlayForCanvas(nextCanvas) {
+        if (!nextCanvas || nextCanvas === _highwayCanvas) {
+            _applyCanvasDims();
+            return;
+        }
+
+        const restoreSettingsPanel = _settingsVisible;
+        const restoreDetectStep = _detectStep;
+        const restoreDetectCaptureLo = _detectCaptureLo;
+        if (_highwayCanvas) _highwayCanvas.style.visibility = _prevHighwayDisplay;
+        if (_pianoCanvas) {
+            _pianoCanvas.remove();
+            _pianoCanvas = null;
+            _pianoCtx = null;
+        }
+        _removeSettingsPanel();
+        _removeSettingsGear();
+        _restoreControlsStyle();
+
+        _highwayCanvas = nextCanvas;
+        _prevHighwayDisplay = nextCanvas.style.visibility || '';
+        _pianoCanvas = _createOverlayCanvas();
+        if (!_pianoCanvas) return;
+        _pianoCtx = _pianoCanvas.getContext('2d');
+        if (!_pianoCtx) {
+            console.warn('[Piano] canvas-replaced: getContext("2d") returned null; aborting');
+            _pianoCanvas.remove();
+            _pianoCanvas = null;
+            return;
+        }
+
+        _highwayCanvas.style.visibility = 'hidden';
+        _injectSettingsGear();
+        if (restoreSettingsPanel) {
+            _settingsVisible = true;
+            _createSettingsPanel();
+            _detectStep = restoreDetectStep;
+            _detectCaptureLo = restoreDetectCaptureLo;
+            _updateDetectStatus();
+        }
+        _setChromeVisible(_chromeVisible);
+        _applyCanvasDims();
+    }
+
+    function _handleHostCanvasReplaced(ev) {
+        if (!_isReady) return;
+        const detail = _eventDetail(ev);
+        if (!_eventTargetsThisCanvas(detail)) return;
+        _rebuildOverlayForCanvas(_eventCanvas(detail));
+    }
+
+    function _handleHostVisibility(ev) {
+        if (!_isReady) return;
+        const detail = _eventDetail(ev);
+        if (!_eventTargetsThisCanvas(detail)) return;
+        if (typeof detail.visible === 'boolean') _setChromeVisible(detail.visible);
+        else if (typeof detail.hidden === 'boolean') _setChromeVisible(!detail.hidden);
+    }
+
+    function _stopRenderLoop() {
+        if (!_renderFrameId) return;
+        cancelAnimationFrame(_renderFrameId);
+        _renderFrameId = 0;
+    }
+
+    function _stopInitFrame() {
+        if (!_initFrameId) return;
+        cancelAnimationFrame(_initFrameId);
+        _initFrameId = 0;
+    }
+
+    function _renderLatestBundle() {
+        if (!_isReady || !_latestBundle) return;
+
+        const isReady = !!_latestBundle.isReady;
+        if (isReady && !_lastBundleIsReady) {
+            _resetForNewChart();
+        }
+        _lastBundleIsReady = isReady;
+
+        if (!isReady) {
+            if (_pianoCanvas && _pianoCtx) {
+                const W = _pianoCanvas.width / (window.devicePixelRatio || 1);
+                const H = _pianoCanvas.height / (window.devicePixelRatio || 1);
+                _pianoCtx.fillStyle = '#040408';
+                _pianoCtx.fillRect(0, 0, W, H);
+            }
+            return;
+        }
+
+        _draw(_latestBundle.notes, _latestBundle.chords, _latestBundle.currentTime, _latestBundle.beats);
+    }
+
+    function _renderLoop() {
+        _renderFrameId = 0;
+        if (!_isReady || !_latestBundle) return;
+        _renderLatestBundle();
+        _renderFrameId = requestAnimationFrame(_renderLoop);
+    }
+
+    function _ensureRenderLoop() {
+        if (_renderFrameId || !_isReady || !_latestBundle) return;
+        _renderFrameId = requestAnimationFrame(_renderLoop);
     }
 
     // ── Drawing ──
@@ -1930,6 +2126,9 @@ function createFactory() {
     // ── Teardown ──
 
     function _teardown() {
+        _stopInitFrame();
+        _stopRenderLoop();
+
         if (_pianoCanvas) {
             _pianoCanvas.remove();
             _pianoCanvas = null;
@@ -1959,11 +2158,13 @@ function createFactory() {
         _latestNotes = null;
         _latestChords = null;
         _latestTime = 0;
+        _latestBundle = null;
     }
 
     // ── Factory return: setRenderer contract ──
 
     const instance = {
+        contextType: '2d',
         init(canvas /* , bundle */) {
             // Defensive teardown if a prior init wasn't paired with
             // destroy. Remove listeners, restore canvas, release
@@ -1977,6 +2178,7 @@ function createFactory() {
             // ever running.
             if (_pianoCanvas || _isReady) {
                 window.removeEventListener('resize', _onWinResize);
+                _unsubscribeHostEvents();
                 const ss = window.slopsmithSplitscreen;
                 if (ss && typeof ss.offFocusChange === 'function') {
                     ss.offFocusChange(_onFocusChange);
@@ -1995,6 +2197,7 @@ function createFactory() {
             // updates. Set to true in destroy() above — without this
             // reset, _updateFocusState would permanently no-op.
             _instanceDestroyed = false;
+            _chromeVisible = true;
 
             _highwayCanvas = canvas;
             // Snapshot/restore via `visibility` (not `display`): the host's
@@ -2056,12 +2259,14 @@ function createFactory() {
                 _applyCanvasDims();
             };
             _resyncFromHost();
-            requestAnimationFrame(() => {
+            _initFrameId = requestAnimationFrame(() => {
+                _initFrameId = 0;
                 // Bail if a teardown happened before the frame fired.
                 if (!_pianoCanvas || !_pianoCtx) return;
                 _resyncFromHost();
             });
             window.addEventListener('resize', _onWinResize);
+            _subscribeHostEvents();
 
             const ss = window.slopsmithSplitscreen;
             // Subscribe only when BOTH on/offFocusChange exist on
@@ -2100,37 +2305,9 @@ function createFactory() {
         },
         draw(bundle) {
             if (!_isReady || !bundle) return;
-
-            // Wave C: bundle.isReady edge detect in place of the
-            // global song:ready subscription. Each panel's highway
-            // emits song:ready independently; subscribing at module
-            // scope would fire N×. Edge-detecting per-instance
-            // correctly scopes the reset.
-            const isReady = !!bundle.isReady;
-            if (isReady && !_lastBundleIsReady) {
-                _resetForNewChart();
-            }
-            _lastBundleIsReady = isReady;
-
-            // Loading / reconnect window — chart isn't confirmed
-            // yet. Paint the plugin's base background so the
-            // previous chart's notes + HUD don't sit frozen on
-            // screen, but DON'T render the keyboard either since
-            // we don't know what tuning / range applies. Once
-            // bundle.isReady flips true we hand off to _draw
-            // which renders the keyboard at the discovered range
-            // (or a sane default if the visible window is empty).
-            if (!isReady) {
-                if (_pianoCanvas && _pianoCtx) {
-                    const W = _pianoCanvas.width / (window.devicePixelRatio || 1);
-                    const H = _pianoCanvas.height / (window.devicePixelRatio || 1);
-                    _pianoCtx.fillStyle = '#040408';
-                    _pianoCtx.fillRect(0, 0, W, H);
-                }
-                return;
-            }
-
-            _draw(bundle.notes, bundle.chords, bundle.currentTime, bundle.beats);
+            _latestBundle = bundle;
+            _renderLatestBundle();
+            _ensureRenderLoop();
         },
         resize(/* w, h */) {
             if (!_isReady) return;
@@ -2143,7 +2320,9 @@ function createFactory() {
             // catches any event that sneaks through a failed /
             // missing offFocusChange call.
             _instanceDestroyed = true;
+            _stopRenderLoop();
             window.removeEventListener('resize', _onWinResize);
+            _unsubscribeHostEvents();
             const ss = window.slopsmithSplitscreen;
             if (ss && typeof ss.offFocusChange === 'function') {
                 ss.offFocusChange(_onFocusChange);
@@ -2201,6 +2380,7 @@ if (typeof module !== 'undefined' && module.exports) {
         noteToMidi, midiToNoteName, isBlackKey, _neonRGB, _rgbStr,
         _wafFile, _wafVar, _wafUrl, _midiResolveSaved, _computeOctaveShift, _nearTermMidiRange,
         matchesArrangement: createFactory.matchesArrangement,
+        _createFactory: createFactory,
     };
 }
 

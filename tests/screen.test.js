@@ -6,10 +6,188 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-function freshPlugin() {
-    global.window = {};
+function createStyle() {
+    return {
+        cssText: '',
+        display: '',
+        visibility: '',
+        position: '',
+        zIndex: '',
+        width: '',
+        height: '',
+    };
+}
+
+function createElement(tagName, ownerDocument) {
+    const el = {
+        tagName: tagName.toUpperCase(),
+        className: '',
+        dataset: {},
+        style: createStyle(),
+        children: [],
+        parentNode: null,
+        ownerDocument,
+        clientWidth: 640,
+        clientHeight: 360,
+        width: 0,
+        height: 0,
+        type: '',
+        title: '',
+        textContent: '',
+        _innerHTML: '',
+        _classLookup: new Map(),
+        get innerHTML() { return this._innerHTML; },
+        set innerHTML(value) {
+            this._innerHTML = String(value);
+            this._classLookup.clear();
+            const classNames = this._innerHTML.match(/class="([^"]+)"/g) || [];
+            for (const raw of classNames) {
+                for (const cls of raw.slice(7, -1).split(/\s+/).filter(Boolean)) {
+                    if (!this._classLookup.has(cls)) {
+                        const child = createElement('input', ownerDocument);
+                        child.className = cls;
+                        child.value = '';
+                        child.checked = false;
+                        this._classLookup.set(cls, child);
+                    }
+                }
+            }
+        },
+        onclick: null,
+        attributes: {},
+        appendChild(child) {
+            if (child.parentNode) child.remove();
+            child.parentNode = this;
+            this.children.push(child);
+            return child;
+        },
+        insertBefore(child, before) {
+            if (child.parentNode) child.remove();
+            child.parentNode = this;
+            const idx = this.children.indexOf(before);
+            if (idx === -1) this.children.push(child);
+            else this.children.splice(idx, 0, child);
+            return child;
+        },
+        remove() {
+            if (!this.parentNode) return;
+            const siblings = this.parentNode.children;
+            const idx = siblings.indexOf(this);
+            if (idx >= 0) siblings.splice(idx, 1);
+            this.parentNode = null;
+        },
+        setAttribute(name, value) { this.attributes[name] = String(value); },
+        querySelectorAll(selector) {
+            if (selector === ':scope > button') return this.children.filter(c => c.tagName === 'BUTTON');
+            return [];
+        },
+        querySelector(selector) {
+            if (selector && selector.startsWith('.')) return this._classLookup.get(selector.slice(1)) || null;
+            return null;
+        },
+        getContext(type) {
+            if (tagName !== 'canvas' || type !== '2d') return null;
+            return {
+                canvas: this,
+                setTransform() {},
+                fillRect() {},
+                fillText() {},
+                measureText(text) { return { width: String(text).length * 6 }; },
+                createLinearGradient() { return { addColorStop() {} }; },
+                beginPath() {},
+                moveTo() {},
+                lineTo() {},
+                quadraticCurveTo() {},
+                closePath() {},
+                fill() {},
+                stroke() {},
+            };
+        },
+    };
+    return el;
+}
+
+function createDocument() {
+    const doc = {
+        elementsById: {},
+        listeners: new Map(),
+        createElement(tag) { return createElement(tag, doc); },
+        getElementById(id) { return this.elementsById[id] || null; },
+        querySelector() { return null; },
+        querySelectorAll(selector) {
+            if (!selector || !selector.startsWith('.')) return [];
+            const cls = selector.slice(1);
+            const out = [];
+            const visit = (el) => {
+                if (!el) return;
+                if (String(el.className || '').split(/\s+/).includes(cls)) out.push(el);
+                for (const child of el.children || []) visit(child);
+                for (const child of el._classLookup ? el._classLookup.values() : []) visit(child);
+            };
+            for (const el of Object.values(this.elementsById)) visit(el);
+            return out;
+        },
+        addEventListener(type, fn) {
+            if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+            this.listeners.get(type).add(fn);
+        },
+        removeEventListener(type, fn) {
+            const set = this.listeners.get(type);
+            if (set) set.delete(fn);
+        },
+    };
+    const player = doc.createElement('div');
+    player.clientWidth = 640;
+    player.clientHeight = 360;
+    doc.head = doc.createElement('head');
+    const controls = doc.createElement('div');
+    controls.clientWidth = 640;
+    controls.clientHeight = 48;
+    const close = doc.createElement('button');
+    doc.elementsById.player = player;
+    doc.elementsById['player-controls'] = controls;
+    player.appendChild(controls);
+    controls.appendChild(close);
+    return doc;
+}
+
+function installBrowserHarness(options = {}) {
+    const doc = createDocument();
+    const windowListeners = new Map();
+    let rafId = 0;
+    const rafs = new Map();
+    global.window = {
+        devicePixelRatio: 1,
+        feedBack: options.feedBack,
+        highway: { resize() {} },
+        addEventListener(type, fn) {
+            if (!windowListeners.has(type)) windowListeners.set(type, new Set());
+            windowListeners.get(type).add(fn);
+        },
+        removeEventListener(type, fn) {
+            const set = windowListeners.get(type);
+            if (set) set.delete(fn);
+        },
+        dispatchEvent(ev) {
+            for (const fn of windowListeners.get(ev.type) || []) fn(ev);
+        },
+        requestAnimationFrame(fn) {
+            const id = ++rafId;
+            rafs.set(id, fn);
+            return id;
+        },
+        cancelAnimationFrame(id) { rafs.delete(id); },
+    };
+    global.document = doc;
     global.localStorage = { getItem: () => null, setItem: () => {} };
-    global.document = { addEventListener: () => {} };
+    global.requestAnimationFrame = global.window.requestAnimationFrame;
+    global.cancelAnimationFrame = global.window.cancelAnimationFrame;
+    global.performance = { now: () => 0 };
+    return { doc, windowListeners, rafs };
+}
+
+function freshPlugin(options = {}) {
+    installBrowserHarness(options);
     const file = path.join(__dirname, '..', 'screen.js');
     delete require.cache[require.resolve(file)];
     return require(file);
@@ -187,4 +365,279 @@ test('matchesArrangement keeps legacy keys sloppaks that still carry wire notes'
         arrangements: [{ index: 0, name: 'Piano', notes: 42 }],
     };
     assert.equal(mod.matchesArrangement(songInfo), true);
+});
+
+function initRendererWithHarness(options = {}) {
+    const harness = installBrowserHarness(options);
+    const file = path.join(__dirname, '..', 'screen.js');
+    delete require.cache[require.resolve(file)];
+    const plugin = require(file);
+    const renderer = plugin._createFactory();
+    const canvas = harness.doc.createElement('canvas');
+    canvas.clientWidth = 640;
+    canvas.clientHeight = 360;
+    harness.doc.elementsById.player.appendChild(canvas);
+    renderer.init(canvas);
+    return { harness, renderer, canvas };
+}
+
+function listenerCount(harness, type) {
+    return (harness.windowListeners.get(type) || new Set()).size;
+}
+
+function openSettingsPanel(harness) {
+    const gear = harness.doc.elementsById['player-controls'].children.find(el => el.className.includes('btn-piano-settings'));
+    assert.ok(gear, 'settings gear should be mounted');
+    gear.onclick();
+    const panel = harness.doc.elementsById.player.children.find(el => el.className === 'piano-settings-panel');
+    assert.ok(panel, 'settings panel should be open');
+    return panel;
+}
+
+function replaceCanvas(harness, oldCanvas) {
+    const player = harness.doc.elementsById.player;
+    const next = harness.doc.createElement('canvas');
+    next.clientWidth = 640;
+    next.clientHeight = 360;
+    player.appendChild(next);
+    window.dispatchEvent({ type: 'highway:canvas-replaced', detail: { oldCanvas, canvas: next } });
+    return next;
+}
+
+test('renderer lifecycle events register and remove through the window backend', () => {
+    const { harness, renderer } = initRendererWithHarness();
+    assert.equal(listenerCount(harness, 'highway:canvas-replaced'), 1);
+    assert.equal(listenerCount(harness, 'highway:visibility'), 1);
+
+    renderer.destroy();
+
+    assert.equal(listenerCount(harness, 'highway:canvas-replaced'), 0);
+    assert.equal(listenerCount(harness, 'highway:visibility'), 0);
+});
+
+test('renderer lifecycle events register and remove through the feedBack backend when on/off are both present', () => {
+    const listeners = new Map();
+    const feedBack = {
+        on(type, fn) {
+            if (!listeners.has(type)) listeners.set(type, new Set());
+            listeners.get(type).add(fn);
+        },
+        off(type, fn) {
+            const set = listeners.get(type);
+            if (set) set.delete(fn);
+        },
+    };
+    const { renderer } = initRendererWithHarness({ feedBack });
+
+    assert.equal((listeners.get('highway:canvas-replaced') || new Set()).size, 1);
+    assert.equal((listeners.get('highway:visibility') || new Set()).size, 1);
+
+    renderer.destroy();
+
+    assert.equal((listeners.get('highway:canvas-replaced') || new Set()).size, 0);
+    assert.equal((listeners.get('highway:visibility') || new Set()).size, 0);
+});
+
+test('renderer lifecycle removes listeners from the subscribed backend if feedBack changes', () => {
+    const originalListeners = new Map();
+    const replacementListeners = new Map();
+    const createFeedBack = (listeners) => ({
+        on(type, fn) {
+            if (!listeners.has(type)) listeners.set(type, new Set());
+            listeners.get(type).add(fn);
+        },
+        off(type, fn) {
+            const set = listeners.get(type);
+            if (set) set.delete(fn);
+        },
+    });
+    const originalFeedBack = createFeedBack(originalListeners);
+    const { renderer } = initRendererWithHarness({ feedBack: originalFeedBack });
+
+    assert.equal((originalListeners.get('highway:canvas-replaced') || new Set()).size, 1);
+    assert.equal((originalListeners.get('highway:visibility') || new Set()).size, 1);
+
+    window.feedBack = createFeedBack(replacementListeners);
+    renderer.destroy();
+
+    assert.equal((originalListeners.get('highway:canvas-replaced') || new Set()).size, 0);
+    assert.equal((originalListeners.get('highway:visibility') || new Set()).size, 0);
+    assert.equal((replacementListeners.get('highway:canvas-replaced') || new Set()).size, 0);
+    assert.equal((replacementListeners.get('highway:visibility') || new Set()).size, 0);
+});
+
+test('renderer lifecycle falls back to window events unless feedBack has both on and off', () => {
+    const feedBack = { on() { throw new Error('feedBack.on should not be used without off'); } };
+    const { harness, renderer } = initRendererWithHarness({ feedBack });
+
+    assert.equal(listenerCount(harness, 'highway:canvas-replaced'), 1);
+    assert.equal(listenerCount(harness, 'highway:visibility'), 1);
+
+    renderer.destroy();
+
+    assert.equal(listenerCount(harness, 'highway:canvas-replaced'), 0);
+    assert.equal(listenerCount(harness, 'highway:visibility'), 0);
+});
+
+test('canvas replacement ignores unrelated canvases and rebuilds overlays for the targeted canvas', () => {
+    const { harness, renderer, canvas } = initRendererWithHarness();
+    const player = harness.doc.elementsById.player;
+    const originalOverlay = player.children.find(el => el.className === 'piano-highway-canvas');
+    assert.ok(originalOverlay, 'initial overlay should exist');
+
+    const unrelated = harness.doc.createElement('canvas');
+    const next = harness.doc.createElement('canvas');
+    next.clientWidth = 800;
+    next.clientHeight = 400;
+    player.appendChild(next);
+
+    window.dispatchEvent({ type: 'highway:canvas-replaced', detail: { oldCanvas: unrelated, canvas: next } });
+    assert.equal(player.children.includes(originalOverlay), true, 'unrelated event should leave overlay alone');
+
+    window.dispatchEvent({ type: 'highway:canvas-replaced', detail: { oldCanvas: canvas, canvas: next } });
+
+    const overlays = player.children.filter(el => el.className === 'piano-highway-canvas');
+    assert.equal(overlays.length, 1);
+    assert.notEqual(overlays[0], originalOverlay);
+    assert.equal(canvas.style.visibility, '');
+    assert.equal(next.style.visibility, 'hidden');
+
+    renderer.destroy();
+});
+
+test('canvas replacement preserves an open settings panel and closed-panel behavior', () => {
+    const { harness, renderer, canvas } = initRendererWithHarness();
+    const player = harness.doc.elementsById.player;
+    const panel = openSettingsPanel(harness);
+
+    let panels = player.children.filter(el => el.className === 'piano-settings-panel');
+    assert.equal(panels.length, 1);
+    assert.equal(panel.style.display, '');
+
+    const next = harness.doc.createElement('canvas');
+    next.clientWidth = 640;
+    next.clientHeight = 360;
+    player.appendChild(next);
+    window.dispatchEvent({ type: 'highway:canvas-replaced', detail: { oldCanvas: canvas, canvas: next } });
+
+    panels = player.children.filter(el => el.className === 'piano-settings-panel');
+    assert.equal(panels.length, 1, 'open settings panel should be recreated');
+    assert.equal(panels[0].style.display, '');
+
+    const nextGear = harness.doc.elementsById['player-controls'].children.find(el => el.className.includes('btn-piano-settings'));
+    nextGear.onclick();
+    assert.equal(player.children.filter(el => el.className === 'piano-settings-panel').length, 1);
+    assert.equal(player.children.find(el => el.className === 'piano-settings-panel').style.display, 'none');
+
+    const finalCanvas = harness.doc.createElement('canvas');
+    player.appendChild(finalCanvas);
+    window.dispatchEvent({ type: 'highway:canvas-replaced', detail: { oldCanvas: next, canvas: finalCanvas } });
+    assert.equal(player.children.filter(el => el.className === 'piano-settings-panel').length, 0, 'closed panel should stay closed');
+
+    renderer.destroy();
+});
+
+test('canvas replacement preserves range detection while waiting for the low key', () => {
+    const { harness, renderer, canvas } = initRendererWithHarness();
+    const panel = openSettingsPanel(harness);
+    panel.querySelector('.piano-octave-detect').onclick();
+    assert.equal(panel.querySelector('.piano-octave-status').textContent, 'Press your LOWEST key…');
+
+    replaceCanvas(harness, canvas);
+
+    const restoredPanel = harness.doc.elementsById.player.children.find(el => el.className === 'piano-settings-panel');
+    assert.equal(restoredPanel.querySelector('.piano-octave-status').textContent, 'Press your LOWEST key…');
+
+    renderer.destroy();
+});
+
+test('canvas replacement preserves range detection after capturing the low key', () => {
+    const { harness, renderer, canvas } = initRendererWithHarness();
+    const panel = openSettingsPanel(harness);
+    panel.querySelector('.piano-octave-detect').onclick();
+    renderer._handleNoteOn(48, 100);
+    assert.equal(panel.querySelector('.piano-octave-status').textContent, 'Now press your HIGHEST key…');
+
+    replaceCanvas(harness, canvas);
+
+    const restoredPanel = harness.doc.elementsById.player.children.find(el => el.className === 'piano-settings-panel');
+    assert.equal(restoredPanel.querySelector('.piano-octave-status').textContent, 'Now press your HIGHEST key…');
+    renderer._handleNoteOn(72, 100);
+    assert.equal(restoredPanel.querySelector('.piano-octave-status').textContent, 'Detected C3–C5 (25 keys)');
+
+    renderer.destroy();
+});
+
+test('visibility events hide and restore overlay chrome for targeted canvases only', () => {
+    const { harness, renderer, canvas } = initRendererWithHarness();
+    const player = harness.doc.elementsById.player;
+    const overlay = player.children.find(el => el.className === 'piano-highway-canvas');
+    const panel = openSettingsPanel(harness);
+    const gear = harness.doc.elementsById['player-controls'].children.find(el => el.className.includes('btn-piano-settings'));
+
+    window.dispatchEvent({ type: 'highway:visibility', detail: { canvas, visible: false } });
+    assert.equal(overlay.style.display, 'none');
+    assert.equal(gear.style.display, 'none');
+    assert.equal(panel.style.display, 'none');
+
+    window.dispatchEvent({ type: 'highway:visibility', detail: { canvas: harness.doc.createElement('canvas'), visible: true } });
+    assert.equal(overlay.style.display, 'none', 'unrelated visibility event should be ignored');
+
+    window.dispatchEvent({ type: 'highway:visibility', detail: { canvas, hidden: false } });
+    assert.equal(overlay.style.display, '');
+    assert.equal(gear.style.display, '');
+    assert.equal(panel.style.display, '');
+
+    renderer.destroy();
+});
+
+test('destroy and defensive re-init clean up prior listeners and overlays', () => {
+    const { harness, renderer, canvas } = initRendererWithHarness();
+    const player = harness.doc.elementsById.player;
+    assert.equal(listenerCount(harness, 'highway:canvas-replaced'), 1);
+    assert.equal(player.children.filter(el => el.className === 'piano-highway-canvas').length, 1);
+
+    const secondCanvas = harness.doc.createElement('canvas');
+    secondCanvas.clientWidth = 640;
+    secondCanvas.clientHeight = 360;
+    player.appendChild(secondCanvas);
+    renderer.init(secondCanvas);
+
+    assert.equal(listenerCount(harness, 'highway:canvas-replaced'), 1, 're-init should not leak canvas listeners');
+    assert.equal(listenerCount(harness, 'highway:visibility'), 1, 're-init should not leak visibility listeners');
+    assert.equal(player.children.filter(el => el.className === 'piano-highway-canvas').length, 1, 're-init should remove prior overlay');
+    assert.equal(canvas.style.visibility, '');
+
+    renderer.destroy();
+
+    assert.equal(listenerCount(harness, 'highway:canvas-replaced'), 0);
+    assert.equal(listenerCount(harness, 'highway:visibility'), 0);
+    assert.equal(player.children.filter(el => el.className === 'piano-highway-canvas').length, 0);
+
+    const thirdCanvas = harness.doc.createElement('canvas');
+    player.appendChild(thirdCanvas);
+    window.dispatchEvent({ type: 'highway:canvas-replaced', detail: { oldCanvas: secondCanvas, canvas: thirdCanvas } });
+    assert.equal(player.children.filter(el => el.className === 'piano-highway-canvas').length, 0, 'callbacks should stop after destroy');
+});
+
+test('destroy and defensive re-init cancel pending init animation frames', () => {
+    const { harness, renderer } = initRendererWithHarness();
+    const player = harness.doc.elementsById.player;
+    assert.equal(harness.rafs.size, 1, 'init should schedule one follow-up layout frame');
+
+    renderer.destroy();
+    assert.equal(harness.rafs.size, 0, 'destroy should cancel the pending init frame');
+
+    const canvas = harness.doc.createElement('canvas');
+    player.appendChild(canvas);
+    renderer.init(canvas);
+    assert.equal(harness.rafs.size, 1);
+
+    const secondCanvas = harness.doc.createElement('canvas');
+    player.appendChild(secondCanvas);
+    renderer.init(secondCanvas);
+    assert.equal(harness.rafs.size, 1, 're-init should cancel the old init frame before scheduling a new one');
+
+    renderer.destroy();
+    assert.equal(harness.rafs.size, 0);
 });
