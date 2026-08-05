@@ -918,6 +918,8 @@ function createFactory() {
     // (async wrt draw) can score against the filter-aware chart
     // the user sees.
     let _latestNotes = null, _latestChords = null, _latestTime = 0;
+    let _latestBundle = null;
+    let _renderFrameId = 0;
 
     // Wave C: replace the module-level `song:ready` subscription
     // with a bundle.isReady edge-detect per-instance. The global
@@ -1635,6 +1637,46 @@ function createFactory() {
         else if (typeof detail.hidden === 'boolean') _setChromeVisible(!detail.hidden);
     }
 
+    function _stopRenderLoop() {
+        if (!_renderFrameId) return;
+        cancelAnimationFrame(_renderFrameId);
+        _renderFrameId = 0;
+    }
+
+    function _renderLatestBundle() {
+        if (!_isReady || !_latestBundle) return;
+
+        const isReady = !!_latestBundle.isReady;
+        if (isReady && !_lastBundleIsReady) {
+            _resetForNewChart();
+        }
+        _lastBundleIsReady = isReady;
+
+        if (!isReady) {
+            if (_pianoCanvas && _pianoCtx) {
+                const W = _pianoCanvas.width / (window.devicePixelRatio || 1);
+                const H = _pianoCanvas.height / (window.devicePixelRatio || 1);
+                _pianoCtx.fillStyle = '#040408';
+                _pianoCtx.fillRect(0, 0, W, H);
+            }
+            return;
+        }
+
+        _draw(_latestBundle.notes, _latestBundle.chords, _latestBundle.currentTime, _latestBundle.beats);
+    }
+
+    function _renderLoop() {
+        _renderFrameId = 0;
+        if (!_isReady || !_latestBundle) return;
+        _renderLatestBundle();
+        _renderFrameId = requestAnimationFrame(_renderLoop);
+    }
+
+    function _ensureRenderLoop() {
+        if (_renderFrameId || !_isReady || !_latestBundle) return;
+        _renderFrameId = requestAnimationFrame(_renderLoop);
+    }
+
     // ── Drawing ──
 
     function _draw(notes, chords, t, beats) {
@@ -2062,6 +2104,8 @@ function createFactory() {
     // ── Teardown ──
 
     function _teardown() {
+        _stopRenderLoop();
+
         if (_pianoCanvas) {
             _pianoCanvas.remove();
             _pianoCanvas = null;
@@ -2091,6 +2135,7 @@ function createFactory() {
         _latestNotes = null;
         _latestChords = null;
         _latestTime = 0;
+        _latestBundle = null;
     }
 
     // ── Factory return: setRenderer contract ──
@@ -2236,37 +2281,9 @@ function createFactory() {
         },
         draw(bundle) {
             if (!_isReady || !bundle) return;
-
-            // Wave C: bundle.isReady edge detect in place of the
-            // global song:ready subscription. Each panel's highway
-            // emits song:ready independently; subscribing at module
-            // scope would fire N×. Edge-detecting per-instance
-            // correctly scopes the reset.
-            const isReady = !!bundle.isReady;
-            if (isReady && !_lastBundleIsReady) {
-                _resetForNewChart();
-            }
-            _lastBundleIsReady = isReady;
-
-            // Loading / reconnect window — chart isn't confirmed
-            // yet. Paint the plugin's base background so the
-            // previous chart's notes + HUD don't sit frozen on
-            // screen, but DON'T render the keyboard either since
-            // we don't know what tuning / range applies. Once
-            // bundle.isReady flips true we hand off to _draw
-            // which renders the keyboard at the discovered range
-            // (or a sane default if the visible window is empty).
-            if (!isReady) {
-                if (_pianoCanvas && _pianoCtx) {
-                    const W = _pianoCanvas.width / (window.devicePixelRatio || 1);
-                    const H = _pianoCanvas.height / (window.devicePixelRatio || 1);
-                    _pianoCtx.fillStyle = '#040408';
-                    _pianoCtx.fillRect(0, 0, W, H);
-                }
-                return;
-            }
-
-            _draw(bundle.notes, bundle.chords, bundle.currentTime, bundle.beats);
+            _latestBundle = bundle;
+            _renderLatestBundle();
+            _ensureRenderLoop();
         },
         resize(/* w, h */) {
             if (!_isReady) return;
@@ -2279,6 +2296,7 @@ function createFactory() {
             // catches any event that sneaks through a failed /
             // missing offFocusChange call.
             _instanceDestroyed = true;
+            _stopRenderLoop();
             window.removeEventListener('resize', _onWinResize);
             _unsubscribeHostEvents();
             const ss = window.slopsmithSplitscreen;
