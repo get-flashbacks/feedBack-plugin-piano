@@ -1298,9 +1298,20 @@ function createFactory() {
 
     // ── Settings panel + gear button (per-instance) ──
 
+    function _v3PlayerControlSlot() {
+        const ui = window.feedBack && window.feedBack.ui;
+        if (window.feedBack && window.feedBack.uiVersion === 'v3' &&
+                ui && typeof ui.playerControlSlot === 'function') {
+            return ui.playerControlSlot();
+        }
+        return null;
+    }
+
     function _injectSettingsGear() {
         if (_settingsGear) return;
+        const v3Slot = _v3PlayerControlSlot();
         const anchor = _ssSettingsAnchor(_highwayCanvas) ||
+                       v3Slot ||
                        document.getElementById('player-controls');
         if (!anchor) return;
 
@@ -1316,11 +1327,11 @@ function createFactory() {
         gear.appendChild(glyph);
         gear.onclick = _toggleSettings;
 
-        if (_ssActive()) {
-            // Splitscreen: append to the panel bar.
+        if (_ssActive() || v3Slot) {
+            // Splitscreen and v3: use the host-provided chrome slot directly.
             anchor.appendChild(gear);
         } else {
-            // Main-player: insert before the last direct-child button (✕ Close).
+            // Legacy main-player: insert before the last direct-child button (Close).
             // Use ':scope > button' to restrict to direct children — a plain
             // 'button:last-child' traverses the full subtree and can match a
             // nested button (e.g. inside #mixer-anchor) that is not a direct
@@ -1507,8 +1518,14 @@ function createFactory() {
         _detectStep = 'idle';
     }
 
+    function _hostEventsUseFeedBack() {
+        return !!(window.feedBack &&
+            typeof window.feedBack.on === 'function' &&
+            typeof window.feedBack.off === 'function');
+    }
+
     function _hostEventOn(name, fn) {
-        if (window.feedBack && typeof window.feedBack.on === 'function') {
+        if (_hostEventsUseFeedBack()) {
             window.feedBack.on(name, fn);
             return;
         }
@@ -1516,8 +1533,9 @@ function createFactory() {
     }
 
     function _hostEventOff(name, fn) {
-        if (window.feedBack && typeof window.feedBack.off === 'function') {
+        if (_hostEventsUseFeedBack()) {
             window.feedBack.off(name, fn);
+            return;
         }
         window.removeEventListener(name, fn);
     }
@@ -1569,6 +1587,7 @@ function createFactory() {
             return;
         }
 
+        const restoreSettingsPanel = _settingsVisible;
         if (_highwayCanvas) _highwayCanvas.style.visibility = _prevHighwayDisplay;
         if (_pianoCanvas) {
             _pianoCanvas.remove();
@@ -1593,6 +1612,10 @@ function createFactory() {
 
         _highwayCanvas.style.visibility = 'hidden';
         _injectSettingsGear();
+        if (restoreSettingsPanel) {
+            _settingsVisible = true;
+            _createSettingsPanel();
+        }
         _setChromeVisible(_chromeVisible);
         _applyCanvasDims();
     }
