@@ -2356,6 +2356,7 @@ if (typeof module !== 'undefined' && module.exports) {
         noteToMidi, midiToNoteName, isBlackKey, _neonRGB, _rgbStr,
         _wafFile, _wafVar, _wafUrl, _midiResolveSaved, _computeOctaveShift, _nearTermMidiRange,
         matchesArrangement: createFactory.matchesArrangement,
+        _createFactory: createFactory,
     };
 }
 
