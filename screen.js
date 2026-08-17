@@ -677,11 +677,15 @@ function buildKeyLayout(lo, hi, areaX, areaW) {
     return keys;
 }
 
-function keyForMidi(midi, layout) {
-    for (const k of layout) {
-        if (k.midi === midi) return k;
-    }
-    return null;
+// Companion index for a layout array built by buildKeyLayout() — avoids
+// an O(layout.length) linear scan per rendered note in the hot per-frame
+// note-drawing path (_drawScrollingNotes can draw dozens of notes/frame
+// against an up-to-88-entry layout). Built once whenever the layout is
+// (re)built, not per note — see _cachedLayoutMap below.
+function buildKeyLookup(layout) {
+    const map = new Map();
+    for (const k of layout) map.set(k.midi, k);
+    return map;
 }
 
 function _timeToY(dt, nowLineY, topY) {
@@ -901,7 +905,7 @@ function createFactory() {
 
     // Display range cache
     let _displayLo = null, _displayHi = null;
-    let _cachedLayout = null, _lastLayoutW = 0;
+    let _cachedLayout = null, _cachedLayoutMap = null, _lastLayoutW = 0;
     let _lastRangeLo = -1, _lastRangeHi = -1;
 
     // Controller-fit: recomputed once per draw() frame from the current
@@ -1176,6 +1180,7 @@ function createFactory() {
     function _resetForNewChart() {
         _resetScoring();
         _cachedLayout = null;
+        _cachedLayoutMap = null;
         _lastLayoutW = 0;
         _lastRangeLo = -1;
         _lastRangeHi = -1;
@@ -1750,11 +1755,13 @@ function createFactory() {
 
         if (!_cachedLayout || _lastLayoutW !== W || lo !== _lastRangeLo || hi !== _lastRangeHi) {
             _cachedLayout = buildKeyLayout(lo, hi, padL, W - padL - padR);
+            _cachedLayoutMap = buildKeyLookup(_cachedLayout);
             _lastLayoutW = W;
             _lastRangeLo = lo;
             _lastRangeHi = hi;
         }
         const layout = _cachedLayout;
+        const layoutMap = _cachedLayoutMap;
 
         _updateMissedNotes(t, notes, chords);
 
@@ -1796,7 +1803,7 @@ function createFactory() {
         ctx.lineTo(W - padR, nowLineY);
         ctx.stroke();
 
-        _drawScrollingNotes(ctx, notes, chords, t, layout, noteAreaTop, nowLineY);
+        _drawScrollingNotes(ctx, notes, chords, t, layoutMap, noteAreaTop, nowLineY);
         _drawKeyboard(ctx, layout, kbTop, kbH, notes, chords, t);
 
         if (_cfg.hitDetection && (_hits + _misses) > 0) {
@@ -1831,7 +1838,7 @@ function createFactory() {
         }
     }
 
-    function _drawScrollingNotes(ctx, notes, chords, t, layout, topY, nowLineY) {
+    function _drawScrollingNotes(ctx, notes, chords, t, layoutMap, topY, nowLineY) {
         const allNotes = [];
 
         if (notes) {
@@ -1854,7 +1861,7 @@ function createFactory() {
         }
 
         for (const n of allNotes) {
-            const key = keyForMidi(n.midi, layout);
+            const key = layoutMap.get(n.midi);
             if (!key) continue;
 
             const dt = n.t - t;
@@ -1975,6 +1982,11 @@ function createFactory() {
 
             const [nr, ng, nb] = _neonRGB(k.midi);
             let fr = 0.91, fg = 0.91, fb = 0.94;
+            // Computed at most once per key per frame — this used to be
+            // called a second time below with identical args (both gated
+            // on the same `!pressed` condition), redoing the same
+            // notes/chords scan for no reason.
+            const ap = pressed ? 0 : _approachAlpha(k.midi, notes, chords, t);
             if (playerHeld && songActive) {
                 fr = 0; fg = 1; fb = 0.27;
             } else if (isWrong && playerHeld) {
@@ -1983,13 +1995,10 @@ function createFactory() {
                 fr = 0.27; fg = 0.53; fb = 1;
             } else if (songActive) {
                 fr = nr; fg = ng; fb = nb;
-            } else {
-                const ap = _approachAlpha(k.midi, notes, chords, t);
-                if (ap > 0) {
-                    fr += (nr - fr) * ap * 0.6;
-                    fg += (ng - fg) * ap * 0.6;
-                    fb += (nb - fb) * ap * 0.6;
-                }
+            } else if (ap > 0) {
+                fr += (nr - fr) * ap * 0.6;
+                fg += (ng - fg) * ap * 0.6;
+                fb += (nb - fb) * ap * 0.6;
             }
 
             const grad = ctx.createLinearGradient(0, kbTop + pressOffset, 0, kbTop + kbH);
@@ -2006,7 +2015,6 @@ function createFactory() {
             ctx.stroke();
 
             if (!pressed) {
-                const ap = _approachAlpha(k.midi, notes, chords, t);
                 if (ap > 0.15) {
                     const ba = Math.min((ap - 0.15) * 1.5, 1);
                     ctx.strokeStyle = _rgbStr(nr, ng, nb, ba * 0.6);
@@ -2048,6 +2056,9 @@ function createFactory() {
 
             const [nr, ng, nb] = _neonRGB(k.midi);
             let fr = 0.1, fg = 0.1, fb = 0.12;
+            // Computed at most once per key per frame — see the matching
+            // comment in the white-key loop above.
+            const ap = pressed ? 0 : _approachAlpha(k.midi, notes, chords, t);
             if (playerHeld && songActive) {
                 fr = 0; fg = 0.8; fb = 0.2;
             } else if (isWrong && playerHeld) {
@@ -2056,13 +2067,10 @@ function createFactory() {
                 fr = 0.2; fg = 0.4; fb = 0.8;
             } else if (songActive) {
                 fr = nr * 0.8; fg = ng * 0.8; fb = nb * 0.8;
-            } else {
-                const ap = _approachAlpha(k.midi, notes, chords, t);
-                if (ap > 0) {
-                    fr += (nr * 0.7 - fr) * ap * 0.6;
-                    fg += (ng * 0.7 - fg) * ap * 0.6;
-                    fb += (nb * 0.7 - fb) * ap * 0.6;
-                }
+            } else if (ap > 0) {
+                fr += (nr * 0.7 - fr) * ap * 0.6;
+                fg += (ng * 0.7 - fg) * ap * 0.6;
+                fb += (nb * 0.7 - fb) * ap * 0.6;
             }
 
             const grad = ctx.createLinearGradient(0, kbTop + pressOffset, 0, kbTop + blackH);
@@ -2079,7 +2087,6 @@ function createFactory() {
             ctx.stroke();
 
             if (!pressed) {
-                const ap = _approachAlpha(k.midi, notes, chords, t);
                 if (ap > 0.15) {
                     const ba = Math.min((ap - 0.15) * 1.5, 1);
                     ctx.strokeStyle = _rgbStr(nr, ng, nb, ba * 0.5);
