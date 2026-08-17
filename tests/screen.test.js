@@ -641,3 +641,65 @@ test('destroy and defensive re-init cancel pending init animation frames', () =>
     renderer.destroy();
     assert.equal(harness.rafs.size, 0);
 });
+
+test('_noteHand uses explicit h tag when present', () => {
+    assert.equal(mod._noteHand({ s: 0, f: 0, h: 'l' }), 'l');
+    assert.equal(mod._noteHand({ s: 0, f: 0, h: 'r' }), 'r');
+    assert.equal(mod._noteHand({ s: 0, f: 0, h: 'both' }), 'both');
+    assert.equal(mod._noteHand({ s: 0, f: 0, h: 'left' }), 'l');
+    assert.equal(mod._noteHand({ s: 0, f: 0, h: 'right' }), 'r');
+});
+
+test('_noteHand falls back to MIDI pitch when no h tag', () => {
+    assert.equal(mod._noteHand({ s: 0, f: 0 }), 'l');   // midi 0 < 60
+    assert.equal(mod._noteHand({ s: 2, f: 12 }), 'r');  // midi 60 -> 'r' (not < 60)
+    assert.equal(mod._noteHand({ s: 2, f: 11 }), 'l');  // midi 59 < 60
+    assert.equal(mod._noteHand({ s: 3, f: 0 }), 'r');   // midi 72 >= 60
+});
+
+test('_passesHandFilter allows both by default', () => {
+    assert.equal(mod._passesHandFilter({ s: 0, f: 0 }), true);
+});
+
+test('_passesHandFilter filters by left hand', () => {
+    const orig = mod._cfg.handFilter;
+    mod._cfg.handFilter = 'l';
+    assert.equal(mod._passesHandFilter({ s: 0, f: 0 }), true);   // midi 0, left
+    assert.equal(mod._passesHandFilter({ s: 3, f: 0 }), false);  // midi 72, right
+    assert.equal(mod._passesHandFilter({ s: 2, f: 11, h: 'both' }), true); // both passes both filters
+    mod._cfg.handFilter = orig;
+});
+
+test('settings panel includes hand filter buttons', () => {
+    const { harness, renderer, canvas } = initRendererWithHarness();
+    const panel = openSettingsPanel(harness);
+    assert.ok(panel.querySelector('.piano-hand-lh'), 'LH button should exist');
+    assert.ok(panel.querySelector('.piano-hand-rh'), 'RH button should exist');
+    assert.ok(panel.querySelector('.piano-hand-both'), 'Both button should exist');
+    renderer.destroy();
+});
+
+test('hand filter buttons update persisted config', () => {
+    const { harness, renderer, canvas } = initRendererWithHarness();
+    const panel = openSettingsPanel(harness);
+    const lh = panel.querySelector('.piano-hand-lh');
+    const rh = panel.querySelector('.piano-hand-rh');
+    const both = panel.querySelector('.piano-hand-both');
+
+    lh.onclick();
+    assert.equal(lh.style.background, '#6366f1');
+    assert.equal(rh.style.background, '#1a1a2e');
+    assert.equal(both.style.background, '#1a1a2e');
+
+    rh.onclick();
+    assert.equal(rh.style.background, '#6366f1');
+    assert.equal(lh.style.background, '#1a1a2e');
+    assert.equal(both.style.background, '#1a1a2e');
+
+    both.onclick();
+    assert.equal(both.style.background, '#6366f1');
+    assert.equal(lh.style.background, '#1a1a2e');
+    assert.equal(rh.style.background, '#1a1a2e');
+
+    renderer.destroy();
+});
