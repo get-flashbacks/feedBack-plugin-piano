@@ -308,8 +308,8 @@ const TONE_NAME_GM_MAP = [
     [/\bviola\b/i, 41],
     [/\bcello\b/i, 42],
     [/\bcontrabass\b|\bdouble\s*bass\b/i, 43],
-    [/\bstring/i, 48],
-    [/\bchoir\b|\bvoice\b|\bvocal/i, 52],
+    [/\bstrings?\b/i, 48],
+    [/\bchoir\b|\bvoice\b|\bvocal\b/i, 52],
     [/\btrumpet\b/i, 56],
     [/\btrombone\b/i, 57],
     [/\bfrench\s*horn\b/i, 60],
@@ -318,7 +318,7 @@ const TONE_NAME_GM_MAP = [
     [/\bclarinet\b/i, 71],
     [/\bflute\b/i, 73],
     [/\bsynth\s*lead\b|\blead\s*synth\b/i, 80],
-    [/\bsynth\s*pad\b|\bpad\b/i, 88],
+    [/\bsynth\s*pad\b/i, 88],
     [/\bsynth\b/i, 80],
 ];
 

@@ -259,6 +259,14 @@ test('_gmForToneName maps tone/rig names to GM program numbers, most-specific fi
     assert.equal(mod._gmForToneName('Clean Guitar'), null); // unmapped, not guessed
     assert.equal(mod._gmForToneName(''), null);
     assert.equal(mod._gmForToneName(null), null);
+    // Word-boundary regressions caught in review: "string" must not match
+    // as a bare prefix (e.g. "substring"), and a lone "pad" must not match
+    // outside a "synth pad" context (e.g. "footpad").
+    assert.equal(mod._gmForToneName('Substring Theory'), null);
+    assert.equal(mod._gmForToneName('String Section'), 48);
+    assert.equal(mod._gmForToneName('Strings'), 48);
+    assert.equal(mod._gmForToneName('Footpad'), null);
+    assert.equal(mod._gmForToneName('Synth Pad'), 88);
 });
 
 test('_activeToneNameAt resolves the most recent tone_changes entry at or before t', () => {
