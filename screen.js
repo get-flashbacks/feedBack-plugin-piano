@@ -143,7 +143,6 @@ let _synthPlayer = null;
 let _synthPreset = null;
 let _synthGain = null;
 const _noteEnvelopes = new Map();   // shared: transposed midi → envelope
-let _synthLoading = false;
 let _playerScriptLoaded = false;
 // Bumped on every _synthLoadInstrumentByGm call; a load only commits its
 // preset if it's still the most recent request when its (async) script
@@ -404,7 +403,6 @@ async function _synthLoadInstrument(idx) {
 async function _synthLoadInstrumentByGm(gm, label) {
     if (!_synthPlayer || !_audioCtx) return;
     const myGeneration = ++_synthLoadGeneration;
-    _synthLoading = true;
     const varName = _wafVar(gm);
 
     try {
@@ -423,7 +421,6 @@ async function _synthLoadInstrumentByGm(gm, label) {
     } catch (e) {
         console.warn('[Piano] Failed to load instrument:', label, e);
     }
-    if (myGeneration === _synthLoadGeneration) _synthLoading = false;
 }
 
 function _synthEnsureCtx() {
