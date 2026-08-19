@@ -145,6 +145,12 @@ let _synthGain = null;
 const _noteEnvelopes = new Map();   // shared: transposed midi → envelope
 let _synthLoading = false;
 let _playerScriptLoaded = false;
+// Bumped on every _synthLoadInstrumentByGm call; a load only commits its
+// preset if it's still the most recent request when its (async) script
+// fetch resolves. Without this, two overlapping loads (e.g. a tone change
+// firing again before the first script finishes fetching) can resolve
+// out of order and leave the OLDER instrument installed.
+let _synthLoadGeneration = 0;
 
 // ═══════════════════════════════════════════════════════════════════════
 // MIDI / Color Helpers
@@ -397,6 +403,7 @@ async function _synthLoadInstrument(idx) {
 // picker doesn't list, e.g. Violin.
 async function _synthLoadInstrumentByGm(gm, label) {
     if (!_synthPlayer || !_audioCtx) return;
+    const myGeneration = ++_synthLoadGeneration;
     _synthLoading = true;
     const varName = _wafVar(gm);
 
@@ -404,6 +411,10 @@ async function _synthLoadInstrumentByGm(gm, label) {
         if (!window[varName]) {
             await _loadScript(_wafUrl(gm));
         }
+        // A newer call to this function started (and possibly already
+        // finished) while this one's script fetch was in flight -- that
+        // request's outcome, not this stale one's, must win.
+        if (myGeneration !== _synthLoadGeneration) return;
         const preset = window[varName];
         if (preset) {
             _synthPlayer.adjustPreset(_audioCtx, preset);
@@ -412,7 +423,7 @@ async function _synthLoadInstrumentByGm(gm, label) {
     } catch (e) {
         console.warn('[Piano] Failed to load instrument:', label, e);
     }
-    _synthLoading = false;
+    if (myGeneration === _synthLoadGeneration) _synthLoading = false;
 }
 
 function _synthEnsureCtx() {
@@ -1816,13 +1827,19 @@ function createFactory() {
         if (name === _autoToneAppliedName) return;
         _autoToneAppliedName = name;
         const gm = _gmForToneName(name);
+        // The actual load (and, on a cache miss, _loadScript's synchronous
+        // document.querySelector check) is deferred out of this rAF
+        // callback's call stack via setTimeout -- this branch only runs on
+        // an actual tone change (rare; the dedup check above is what keeps
+        // the common per-frame case cheap), but keeping the DOM-touching
+        // work fully outside the render callback avoids any ambiguity.
         if (gm != null) {
-            _synthLoadInstrumentByGm(gm, name);
+            setTimeout(() => _synthLoadInstrumentByGm(gm, name), 0);
         } else {
             // No tone data, or a name we don't recognize -- fall back to
             // whatever the Sound dropdown has manually selected.
             const inst = INSTRUMENTS[_cfg.instrumentIdx];
-            if (inst) _synthLoadInstrumentByGm(inst.gm, inst.name);
+            if (inst) setTimeout(() => _synthLoadInstrumentByGm(inst.gm, inst.name), 0);
         }
     }
 
