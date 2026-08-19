@@ -1034,6 +1034,12 @@ function createFactory() {
     // the shared synth, so repeated frames with the same active tone
     // don't reload the instrument every tick. Reset on chart change.
     let _autoToneAppliedName = undefined;
+    // setTimeout id for a pending deferred auto-tone load (see
+    // _maybeFollowToneChange). Tracked so the "Auto tone" toggle-off
+    // handler can cancel a load that's already queued but hasn't run
+    // yet -- otherwise it can fire *after* the toggle's own manual
+    // load and silently reinstate the auto-tone instrument.
+    let _toneChangeTimerId = 0;
 
     // ── Listener refs (per-instance so destroy() detach matches) ──
     const _onWinResize = () => _applyCanvasDims();
@@ -1291,6 +1297,7 @@ function createFactory() {
         _displayLo = null;
         _displayHi = null;
         _autoToneAppliedName = undefined;
+        _cancelPendingToneChangeLoad();
         // Wave C: no _primeLatestSnapshot — we don't consult the
         // bare `window.highway` global anymore (it's the main-
         // player's highway, not ours under splitscreen). First
@@ -1601,6 +1608,12 @@ function createFactory() {
             // waiting for the tone to next change.
             _autoToneAppliedName = undefined;
             if (!this.checked && _isFocused) {
+                // A previous frame may have already queued a deferred
+                // auto-tone load (see _maybeFollowToneChange) that hasn't
+                // run yet. Left alone, it fires right after this handler
+                // returns and silently reinstates the auto-tone
+                // instrument -- cancel it before applying the manual one.
+                _cancelPendingToneChangeLoad();
                 const inst = INSTRUMENTS[_cfg.instrumentIdx];
                 if (inst) _synthLoadInstrumentByGm(inst.gm, inst.name);
             }
@@ -1833,14 +1846,33 @@ function createFactory() {
         // an actual tone change (rare; the dedup check above is what keeps
         // the common per-frame case cheap), but keeping the DOM-touching
         // work fully outside the render callback avoids any ambiguity.
+        // The timer id is stashed so a toggle-off of "Auto tone" can
+        // clearTimeout() it before it fires -- see the settings checkbox
+        // handler. clearTimeout is reliable here because a 0ms timer never
+        // runs mid-synchronous-script; it only fires once the current call
+        // stack (e.g. the checkbox's onchange) has unwound.
         if (gm != null) {
-            setTimeout(() => _synthLoadInstrumentByGm(gm, name), 0);
+            _toneChangeTimerId = setTimeout(() => {
+                _toneChangeTimerId = 0;
+                _synthLoadInstrumentByGm(gm, name);
+            }, 0);
         } else {
             // No tone data, or a name we don't recognize -- fall back to
             // whatever the Sound dropdown has manually selected.
             const inst = INSTRUMENTS[_cfg.instrumentIdx];
-            if (inst) setTimeout(() => _synthLoadInstrumentByGm(inst.gm, inst.name), 0);
+            if (inst) {
+                _toneChangeTimerId = setTimeout(() => {
+                    _toneChangeTimerId = 0;
+                    _synthLoadInstrumentByGm(inst.gm, inst.name);
+                }, 0);
+            }
         }
+    }
+
+    function _cancelPendingToneChangeLoad() {
+        if (!_toneChangeTimerId) return;
+        clearTimeout(_toneChangeTimerId);
+        _toneChangeTimerId = 0;
     }
 
     function _renderLoop() {
@@ -2479,6 +2511,7 @@ function createFactory() {
             // missing offFocusChange call.
             _instanceDestroyed = true;
             _stopRenderLoop();
+            _cancelPendingToneChangeLoad();
             window.removeEventListener('resize', _onWinResize);
             _unsubscribeHostEvents();
             const ss = window.slopsmithSplitscreen;
