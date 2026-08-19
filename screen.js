@@ -53,6 +53,7 @@ const OCTAVE_CUE_LOOKAHEAD_SEC = 1.5;
 const STORE_KEYS = {
     midiInputId:   'piano_midi_input',
     instrumentIdx: 'piano_instrument',
+    autoTone:      'piano_auto_tone',
     synthVolume:   'piano_synth_vol',
     midiChannel:   'piano_midi_ch',
     transpose:     'piano_transpose',
@@ -78,6 +79,10 @@ function _readIntOrNull(key) {
 const _cfg = {
     midiInputId:   _readStore(STORE_KEYS.midiInputId) || '',
     instrumentIdx: parseInt(_readStore(STORE_KEYS.instrumentIdx) || '0'),
+    // When on (default), a chart's tone_changes drive the WebAudioFont
+    // instrument automatically (issue #9) — off keeps whatever the Sound
+    // dropdown picked, ignoring tone_changes entirely.
+    autoTone:      _readStore(STORE_KEYS.autoTone) !== 'false',
     synthVolume:   parseFloat(_readStore(STORE_KEYS.synthVolume) || '0.7'),
     midiChannel:   parseInt(_readStore(STORE_KEYS.midiChannel) || '-1'),
     transpose:     parseInt(_readStore(STORE_KEYS.transpose) || '0'),
@@ -282,6 +287,69 @@ function _wafFile(gm) {
 function _wafVar(gm)  { return '_tone_' + _wafFile(gm); }
 function _wafUrl(gm)  { return WAF_BASE + _wafFile(gm) + '.js'; }
 
+// ── Tone-change awareness (issue #9) ──
+//
+// A chart's tone_changes carry a free-form tone/rig *name* (e.g. "Violin",
+// "Clean Guitar"), not a numeric offset — there's no pitch/tuning value to
+// apply. What "tone-change aware" means for a WebAudioFont-driven renderer
+// is switching which GM instrument voice plays, the same way a guitar
+// highway's tone change swaps amp/rig: if the chart's tone goes from Keys
+// to Violin mid-song, playback should follow. Ordered most-specific-first
+// so e.g. "Electric Piano" matches before the bare "Piano" fallback.
+const TONE_NAME_GM_MAP = [
+    [/\bharpsichord\b/i, 6],
+    [/\bvibraphone\b/i, 11],
+    [/\bmusic\s*box\b/i, 10],
+    [/\belectric\s*piano\b|\be[-\s]?piano\b|\brhodes\b|\bwurlitzer\b/i, 4],
+    [/\bhonky[-\s]?tonk\b/i, 3],
+    [/\bpiano\b|\bkeys?\b|\bkeyboard\b/i, 0],
+    [/\borgan\b/i, 19],
+    [/\bviolin\b/i, 40],
+    [/\bviola\b/i, 41],
+    [/\bcello\b/i, 42],
+    [/\bcontrabass\b|\bdouble\s*bass\b/i, 43],
+    [/\bstring/i, 48],
+    [/\bchoir\b|\bvoice\b|\bvocal/i, 52],
+    [/\btrumpet\b/i, 56],
+    [/\btrombone\b/i, 57],
+    [/\bfrench\s*horn\b/i, 60],
+    [/\bsax(ophone)?\b/i, 65],
+    [/\boboe\b/i, 68],
+    [/\bclarinet\b/i, 71],
+    [/\bflute\b/i, 73],
+    [/\bsynth\s*lead\b|\blead\s*synth\b/i, 80],
+    [/\bsynth\s*pad\b|\bpad\b/i, 88],
+    [/\bsynth\b/i, 80],
+];
+
+function _gmForToneName(name) {
+    if (!name) return null;
+    for (const [re, gm] of TONE_NAME_GM_MAP) {
+        if (re.test(name)) return gm;
+    }
+    return null;
+}
+
+// Which tone was active at `t`: the most recent tone_changes entry at or
+// before `t`, falling back to the song's base tone. A scan (not a single
+// early-break loop) since ordering isn't a documented guarantee of the
+// bundle field — toneChanges is typically a handful of entries per song,
+// cheap even scanned every frame.
+function _activeToneNameAt(toneChanges, toneBase, t) {
+    let active = toneBase || null;
+    let bestT = -Infinity;
+    if (Array.isArray(toneChanges)) {
+        for (const change of toneChanges) {
+            if (!change || typeof change.t !== 'number') continue;
+            if (change.t <= t && change.t >= bestT) {
+                bestT = change.t;
+                active = change.name || active;
+            }
+        }
+    }
+    return active;
+}
+
 function _loadScript(url) {
     return new Promise((resolve, reject) => {
         if (document.querySelector(`script[src="${url}"]`)) { resolve(); return; }
@@ -320,13 +388,21 @@ async function _synthInit() {
 
 async function _synthLoadInstrument(idx) {
     const inst = INSTRUMENTS[idx];
-    if (!inst || !_synthPlayer || !_audioCtx) return;
+    if (!inst) return;
+    await _synthLoadInstrumentByGm(inst.gm, inst.name);
+}
+
+// GM-number variant (any 0-127 program, not just the curated INSTRUMENTS
+// dropdown) so tone-change auto-follow can reach instruments the manual
+// picker doesn't list, e.g. Violin.
+async function _synthLoadInstrumentByGm(gm, label) {
+    if (!_synthPlayer || !_audioCtx) return;
     _synthLoading = true;
-    const varName = _wafVar(inst.gm);
+    const varName = _wafVar(gm);
 
     try {
         if (!window[varName]) {
-            await _loadScript(_wafUrl(inst.gm));
+            await _loadScript(_wafUrl(gm));
         }
         const preset = window[varName];
         if (preset) {
@@ -334,7 +410,7 @@ async function _synthLoadInstrument(idx) {
             _synthPreset = preset;
         }
     } catch (e) {
-        console.warn('[Piano] Failed to load instrument:', inst.name, e);
+        console.warn('[Piano] Failed to load instrument:', label, e);
     }
     _synthLoading = false;
 }
@@ -943,6 +1019,11 @@ function createFactory() {
     // Wave C focus state
     let _isFocused = false;
 
+    // Tone-change auto-follow (issue #9): the tone name last applied to
+    // the shared synth, so repeated frames with the same active tone
+    // don't reload the instrument every tick. Reset on chart change.
+    let _autoToneAppliedName = undefined;
+
     // ── Listener refs (per-instance so destroy() detach matches) ──
     const _onWinResize = () => _applyCanvasDims();
     const _onFocusChange = () => _updateFocusState();
@@ -970,6 +1051,11 @@ function createFactory() {
         if (shouldFocus && !_isFocused) {
             _isFocused = true;
             _activeInstance = instance;
+            // Regaining focus: the shared synth may have been switched by
+            // whichever panel was focused in between, so force
+            // _maybeFollowToneChange to re-apply this panel's active tone
+            // rather than trusting the (possibly stale) last-applied name.
+            _autoToneAppliedName = undefined;
         } else if (!shouldFocus && _isFocused) {
             _isFocused = false;
             _releaseAllHeld();
@@ -1193,6 +1279,7 @@ function createFactory() {
         _lastRangeHi = -1;
         _displayLo = null;
         _displayHi = null;
+        _autoToneAppliedName = undefined;
         // Wave C: no _primeLatestSnapshot — we don't consult the
         // bare `window.highway` global anymore (it's the main-
         // player's highway, not ours under splitscreen). First
@@ -1422,6 +1509,11 @@ function createFactory() {
                         ${instrumentOpts}
                     </select>
                 </div>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:#999;cursor:pointer;"
+                    title="Follow the chart's tone changes (switches instrument automatically)">
+                    <input type="checkbox" class="piano-chk-auto-tone" ${_cfg.autoTone ? 'checked' : ''}
+                        style="accent-color:#6366f1;"> Auto tone
+                </label>
                 <div style="display:flex;align-items:center;gap:4px;">
                     <span style="font-size:10px;color:#666;">Vol</span>
                     <input type="range" class="piano-vol-slider" min="0" max="100"
@@ -1488,6 +1580,19 @@ function createFactory() {
             _saveCfg('instrumentIdx', idx);
             await _synthInit();
             await _synthLoadInstrument(idx);
+        };
+        panel.querySelector('.piano-chk-auto-tone').onchange = function () {
+            _saveCfg('autoTone', this.checked);
+            // Force _maybeFollowToneChange to re-evaluate on the next
+            // frame: turning it off should fall back to the Sound
+            // dropdown immediately, and turning it on should immediately
+            // pick up the chart's currently-active tone rather than
+            // waiting for the tone to next change.
+            _autoToneAppliedName = undefined;
+            if (!this.checked && _isFocused) {
+                const inst = INSTRUMENTS[_cfg.instrumentIdx];
+                if (inst) _synthLoadInstrumentByGm(inst.gm, inst.name);
+            }
         };
         panel.querySelector('.piano-vol-slider').oninput = function () {
             _synthSetVolume(parseInt(this.value) / 100);
@@ -1697,6 +1802,28 @@ function createFactory() {
         }
 
         _draw(_latestBundle.notes, _latestBundle.chords, _latestBundle.currentTime, _latestBundle.beats);
+        _maybeFollowToneChange(_latestBundle);
+    }
+
+    // Issue #9: switch the shared WebAudioFont instrument to match the
+    // chart's active tone_changes entry. Gated on _isFocused so that
+    // under splitscreen, unfocused panels don't fight the single shared
+    // synth over which instrument is loaded — only the focused panel's
+    // chart drives audio, same as MIDI input routing already works.
+    function _maybeFollowToneChange(bundle) {
+        if (!_cfg.autoTone || !_isFocused) return;
+        const name = _activeToneNameAt(bundle.toneChanges, bundle.toneBase, bundle.currentTime);
+        if (name === _autoToneAppliedName) return;
+        _autoToneAppliedName = name;
+        const gm = _gmForToneName(name);
+        if (gm != null) {
+            _synthLoadInstrumentByGm(gm, name);
+        } else {
+            // No tone data, or a name we don't recognize -- fall back to
+            // whatever the Sound dropdown has manually selected.
+            const inst = INSTRUMENTS[_cfg.instrumentIdx];
+            if (inst) _synthLoadInstrumentByGm(inst.gm, inst.name);
+        }
     }
 
     function _renderLoop() {
@@ -2393,6 +2520,7 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         noteToMidi, midiToNoteName, isBlackKey, _neonRGB, _rgbStr,
         _wafFile, _wafVar, _wafUrl, _midiResolveSaved, _computeOctaveShift, _nearTermMidiRange,
+        _gmForToneName, _activeToneNameAt,
         matchesArrangement: createFactory.matchesArrangement,
         _createFactory: createFactory,
     };
