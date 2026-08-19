@@ -210,12 +210,19 @@ function _nearTermMidiRange(notes, chords, t, lookaheadSec) {
     return lo <= hi ? { lo, hi } : null;
 }
 
+// A negative `midi` (producible from a malformed chart's out-of-range
+// string/fret values) makes JS's `%` return a negative remainder, which
+// then indexes NOTE_NAMES/NEON_RGB out of bounds. Always fold to 0..11.
+function _pmod12(midi) {
+    return ((midi % 12) + 12) % 12;
+}
+
 function midiToNoteName(midi) {
-    return NOTE_NAMES[midi % 12] + (Math.floor(midi / 12) - 1);
+    return NOTE_NAMES[_pmod12(midi)] + (Math.floor(midi / 12) - 1);
 }
 
 function isBlackKey(midi) {
-    const pc = midi % 12;
+    const pc = _pmod12(midi);
     return pc === 1 || pc === 3 || pc === 6 || pc === 8 || pc === 10;
 }
 
@@ -240,7 +247,7 @@ const NEON_RGB = [
     [1.0, 0.3, 1.0],
 ];
 
-function _neonRGB(midi) { return NEON_RGB[midi % 12]; }
+function _neonRGB(midi) { return NEON_RGB[_pmod12(midi)]; }
 
 function _rgbStr(r, g, b, a) {
     return a !== undefined

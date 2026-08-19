@@ -220,6 +220,21 @@ test('_neonRGB cycles through 12 entries by pitch class', () => {
     assert.notDeepEqual(mod._neonRGB(60), mod._neonRGB(61));
 });
 
+test('midiToNoteName, isBlackKey, and _neonRGB tolerate negative midi from malformed chart data', () => {
+    // A crafted chart/GP import with out-of-range string/fret values can
+    // produce a negative `midi` (noteToMidi = s*24+f). JS's `%` returns a
+    // negative remainder for that, which must not throw or index out of
+    // bounds — it should fold to the same pitch class as the positive
+    // equivalent (-1 === pitch class 11, one octave down from 11).
+    assert.doesNotThrow(() => mod.midiToNoteName(-1));
+    assert.doesNotThrow(() => mod.isBlackKey(-1));
+    assert.doesNotThrow(() => mod._neonRGB(-1));
+    // -1 is pitch class 11 (B), one octave below midi 11 ('B-1').
+    assert.equal(mod.midiToNoteName(-1), 'B-2');
+    assert.equal(mod.isBlackKey(-1), mod.isBlackKey(11));
+    assert.deepEqual(mod._neonRGB(-1), mod._neonRGB(11));
+});
+
 test('_rgbStr formats rgb() without alpha and rgba() with it', () => {
     assert.equal(mod._rgbStr(1, 0, 0), 'rgb(255,0,0)');
     assert.equal(mod._rgbStr(1, 0, 0, 0.5), 'rgba(255,0,0,0.5)');
