@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Tone-change awareness (issue #9): the chart's `tone_changes` now drive which WebAudioFont instrument plays on the focused playback panel, so a mid-song tone change (e.g. Keys → Violin) is reflected in playback instead of staying on whatever instrument was loaded at song start. (Under splitscreen, only the focused panel drives the shared synth — background panels don't fight over which instrument is loaded.) On by default; toggle "Auto tone" in settings to disable and keep the manually-selected Sound dropdown instrument regardless of tone changes.
+
 ### Fixed
 
 - Updated the Piano renderer lifecycle so it declares its 2D canvas context and keeps overlay chrome aligned with host canvas replacement and visibility changes.

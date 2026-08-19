@@ -248,6 +248,44 @@ test('_wafFile/_wafVar/_wafUrl derive consistent names from a GM program number'
     assert.ok(mod._wafUrl(4).endsWith('0040_JCLive_sf2_file.js'));
 });
 
+test('_gmForToneName maps tone/rig names to GM program numbers, most-specific first', () => {
+    assert.equal(mod._gmForToneName('Violin'), 40);
+    assert.equal(mod._gmForToneName('lead violin section'), 40);
+    assert.equal(mod._gmForToneName('Keys'), 0);
+    assert.equal(mod._gmForToneName('Grand Piano'), 0);
+    // "Electric Piano" must not fall through to the bare "piano" match.
+    assert.equal(mod._gmForToneName('Electric Piano'), 4);
+    assert.equal(mod._gmForToneName('Rhodes'), 4);
+    assert.equal(mod._gmForToneName('Clean Guitar'), null); // unmapped, not guessed
+    assert.equal(mod._gmForToneName(''), null);
+    assert.equal(mod._gmForToneName(null), null);
+    // Word-boundary regressions caught in review: "string" must not match
+    // as a bare prefix (e.g. "substring"), and a lone "pad" must not match
+    // outside a "synth pad" context (e.g. "footpad").
+    assert.equal(mod._gmForToneName('Substring Theory'), null);
+    assert.equal(mod._gmForToneName('String Section'), 48);
+    assert.equal(mod._gmForToneName('Strings'), 48);
+    assert.equal(mod._gmForToneName('Footpad'), null);
+    assert.equal(mod._gmForToneName('Synth Pad'), 88);
+});
+
+test('_activeToneNameAt resolves the most recent tone_changes entry at or before t', () => {
+    const changes = [
+        { t: 0, name: 'Keys' },
+        { t: 10, name: 'Violin' },
+        { t: 20, name: 'Strings' },
+    ];
+    assert.equal(mod._activeToneNameAt(changes, 'Base Tone', 5), 'Keys');
+    assert.equal(mod._activeToneNameAt(changes, 'Base Tone', 10), 'Violin');
+    assert.equal(mod._activeToneNameAt(changes, 'Base Tone', 15), 'Violin');
+    assert.equal(mod._activeToneNameAt(changes, 'Base Tone', 999), 'Strings');
+    // Before the first entry (or no entries at all) -- falls back to base.
+    assert.equal(mod._activeToneNameAt(changes, 'Base Tone', -1), 'Base Tone');
+    assert.equal(mod._activeToneNameAt([], 'Base Tone', 5), 'Base Tone');
+    assert.equal(mod._activeToneNameAt(null, 'Base Tone', 5), 'Base Tone');
+    assert.equal(mod._activeToneNameAt(null, null, 5), null);
+});
+
 test('_midiResolveSaved matches by stored key first, falls back to legacy bare id', () => {
     const sources = [{ id: 'dev1', key: 'webmidi:dev1' }, { id: 'dev2', key: 'webmidi:dev2' }];
     assert.equal(mod._midiResolveSaved('webmidi:dev2', sources), 'webmidi:dev2');
