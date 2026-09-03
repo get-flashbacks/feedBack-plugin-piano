@@ -241,6 +241,14 @@ test('_rgbStr formats rgb() without alpha and rgba() with it', () => {
     assert.equal(mod._rgbStr(0, 0, 0, 0), 'rgba(0,0,0,0)');
 });
 
+test('_keyboardGlowBlur scales white and black key glow by velocity', () => {
+    assert.equal(mod._keyboardGlowBlur(1, false), 8 + (1 / 127) * 16);
+    assert.equal(mod._keyboardGlowBlur(127, false), 24);
+    assert.equal(mod._keyboardGlowBlur(1, true), 6 + (1 / 127) * 14);
+    assert.equal(mod._keyboardGlowBlur(127, true), 20);
+    assert.equal(mod._keyboardGlowBlur(0, false), mod._keyboardGlowBlur(80, false));
+});
+
 test('_wafFile/_wafVar/_wafUrl derive consistent names from a GM program number', () => {
     assert.equal(mod._wafFile(0), '0000_JCLive_sf2_file');
     assert.equal(mod._wafFile(19), '0190_JCLive_sf2_file');
