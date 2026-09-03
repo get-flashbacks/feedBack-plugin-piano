@@ -241,6 +241,20 @@ test('_rgbStr formats rgb() without alpha and rgba() with it', () => {
     assert.equal(mod._rgbStr(0, 0, 0, 0), 'rgba(0,0,0,0)');
 });
 
+test('_normalizeHand accepts left/right hand metadata', () => {
+    assert.equal(mod._normalizeHand('L'), 'L');
+    assert.equal(mod._normalizeHand('left'), 'L');
+    assert.equal(mod._normalizeHand('rh'), 'R');
+    assert.equal(mod._normalizeHand('unknown'), null);
+});
+
+test('_notePassesHandFilter keeps unlabelled notes visible and filters selected hand', () => {
+    assert.equal(mod._notePassesHandFilter('L', 'both'), true);
+    assert.equal(mod._notePassesHandFilter('R', 'L'), false);
+    assert.equal(mod._notePassesHandFilter('lh', 'L'), true);
+    assert.equal(mod._notePassesHandFilter(null, 'R'), true);
+});
+
 test('_wafFile/_wafVar/_wafUrl derive consistent names from a GM program number', () => {
     assert.equal(mod._wafFile(0), '0000_JCLive_sf2_file');
     assert.equal(mod._wafFile(19), '0190_JCLive_sf2_file');
