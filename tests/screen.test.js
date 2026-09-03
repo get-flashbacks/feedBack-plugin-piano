@@ -241,6 +241,18 @@ test('_rgbStr formats rgb() without alpha and rgba() with it', () => {
     assert.equal(mod._rgbStr(0, 0, 0, 0), 'rgba(0,0,0,0)');
 });
 
+test('_programChangeInstrumentIndex selects curated GM instruments and safely falls back', () => {
+    assert.equal(mod._programChangeInstrumentIndex(0), 0);
+    assert.equal(mod._programChangeInstrumentIndex(4), 1);
+    assert.equal(mod._programChangeInstrumentIndex(127), 7);
+});
+
+test('_pitchBendSemitones maps 14-bit MIDI bend values around center', () => {
+    assert.equal(mod._pitchBendSemitones(0, 64), 0);
+    assert.equal(mod._pitchBendSemitones(127, 127), 2);
+    assert.ok(mod._pitchBendSemitones(0, 0) < -1.99);
+});
+
 test('_wafFile/_wafVar/_wafUrl derive consistent names from a GM program number', () => {
     assert.equal(mod._wafFile(0), '0000_JCLive_sf2_file');
     assert.equal(mod._wafFile(19), '0190_JCLive_sf2_file');
