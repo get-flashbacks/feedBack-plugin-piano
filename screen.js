@@ -63,6 +63,7 @@ const STORE_KEYS = {
     octaveMode:    'piano_octave_mode',
     controllerLo:  'piano_controller_lo',
     controllerHi:  'piano_controller_hi',
+    handFilter:     'piano_hand_filter',
 };
 
 function _readStore(key) {
@@ -103,6 +104,7 @@ const _cfg = {
     octaveMode:    _readStore(STORE_KEYS.octaveMode) === 'cue' ? 'cue' : 'auto',
     controllerLo:  _readIntOrNull(STORE_KEYS.controllerLo),
     controllerHi:  _readIntOrNull(STORE_KEYS.controllerHi),
+    handFilter:     ['L', 'R'].includes(_readStore(STORE_KEYS.handFilter)) ? _readStore(STORE_KEYS.handFilter) : 'both',
 };
 
 function _saveCfg(key, val) {
@@ -158,6 +160,19 @@ let _synthLoadGeneration = 0;
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 function noteToMidi(string, fret) { return string * 24 + fret; }
+
+function _normalizeHand(value) {
+    const h = String(value || '').trim().toLowerCase();
+    if (h === 'l' || h === 'lh' || h === 'left') return 'L';
+    if (h === 'r' || h === 'rh' || h === 'right') return 'R';
+    return null;
+}
+
+function _notePassesHandFilter(hand, filter) {
+    const selected = filter === 'L' || filter === 'R' ? filter : 'both';
+    const normalized = _normalizeHand(hand);
+    return selected === 'both' || !normalized || normalized === selected;
+}
 
 // Picks the whole-octave shift (multiple of 12 semitones) that best fits
 // the controller's playable range [controllerLo, controllerHi] against a
@@ -870,6 +885,7 @@ function _approachAlpha(midi, notes, chords, t) {
     let closest = Infinity;
     if (notes) {
         for (const n of notes) {
+            if (!_notePassesHandFilter(n.h, _cfg.handFilter)) continue;
             if (n.t < t - 0.05) continue;
             if (n.t > t + lookAhead) break;
             if (noteToMidi(n.s, n.f) === midi) {
@@ -882,6 +898,7 @@ function _approachAlpha(midi, notes, chords, t) {
             if (c.t < t - 0.05) continue;
             if (c.t > t + lookAhead) break;
             for (const cn of (c.notes || [])) {
+                if (!_notePassesHandFilter(cn.h, _cfg.handFilter)) continue;
                 if (noteToMidi(cn.s, cn.f) === midi) {
                     closest = Math.min(closest, c.t - t);
                 }
@@ -1558,6 +1575,15 @@ function createFactory() {
                     <input type="checkbox" class="piano-chk-hits" ${_cfg.hitDetection ? 'checked' : ''}
                         style="accent-color:#22cc66;"> Hits
                 </label>
+                <div style="display:flex;align-items:center;gap:3px;font-size:11px;color:#999;">
+                    <span>Hand</span>
+                    <button class="piano-hand-btn" data-hand="both" type="button"
+                        style="background:#6366f1;border:1px solid #777;border-radius:4px;padding:2px 6px;color:#fff;font-size:10px;cursor:pointer;">Both</button>
+                    <button class="piano-hand-btn" data-hand="L" type="button"
+                        style="background:#1a1a2e;border:1px solid #333;border-radius:4px;padding:2px 6px;color:#aaa;font-size:10px;cursor:pointer;">LH</button>
+                    <button class="piano-hand-btn" data-hand="R" type="button"
+                        style="background:#1a1a2e;border:1px solid #333;border-radius:4px;padding:2px 6px;color:#aaa;font-size:10px;cursor:pointer;">RH</button>
+                </div>
                 <div style="display:flex;align-items:center;gap:4px;">
                     <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:#999;cursor:pointer;">
                         <input type="checkbox" class="piano-chk-octfit" ${_cfg.octaveFit ? 'checked' : ''}
@@ -1638,6 +1664,17 @@ function createFactory() {
             _saveCfg('hitDetection', this.checked);
             if (this.checked) _resetScoring();
         };
+        for (const btn of panel.querySelectorAll('.piano-hand-btn')) {
+            btn.onclick = function () {
+                _saveCfg('handFilter', this.dataset.hand);
+                for (const sibling of panel.querySelectorAll('.piano-hand-btn')) {
+                    const active = sibling.dataset.hand === _cfg.handFilter;
+                    sibling.style.background = active ? '#6366f1' : '#1a1a2e';
+                    sibling.style.borderColor = active ? '#777' : '#333';
+                    sibling.style.color = active ? '#fff' : '#aaa';
+                }
+            };
+        }
         panel.querySelector('.piano-chk-octfit').onchange = function () {
             _saveCfg('octaveFit', this.checked);
         };
@@ -2026,7 +2063,8 @@ function createFactory() {
                 const dt = n.t - t;
                 if (dt > VISIBLE_SECONDS + 1) break;
                 if (dt < -1 && (n.t + (n.sus || 0)) < t - 0.5) continue;
-                allNotes.push({ midi: noteToMidi(n.s, n.f), t: n.t, sus: n.sus || 0, accent: n.ac });
+                if (!_notePassesHandFilter(n.h, _cfg.handFilter)) continue;
+                allNotes.push({ midi: noteToMidi(n.s, n.f), t: n.t, sus: n.sus || 0, accent: n.ac, hand: _normalizeHand(n.h) });
             }
         }
         if (chords) {
@@ -2035,7 +2073,8 @@ function createFactory() {
                 if (dt > VISIBLE_SECONDS + 1) break;
                 if (dt < -1) continue;
                 for (const cn of (c.notes || [])) {
-                    allNotes.push({ midi: noteToMidi(cn.s, cn.f), t: c.t, sus: cn.sus || 0, accent: cn.ac });
+                    if (!_notePassesHandFilter(cn.h, _cfg.handFilter)) continue;
+                    allNotes.push({ midi: noteToMidi(cn.s, cn.f), t: c.t, sus: cn.sus || 0, accent: cn.ac, hand: _normalizeHand(cn.h) });
                 }
             }
         }
@@ -2120,6 +2159,7 @@ function createFactory() {
         const window_ = 0.06;
         if (notes) {
             for (const n of notes) {
+                if (!_notePassesHandFilter(n.h, _cfg.handFilter)) continue;
                 if (n.t > t + window_) continue;
                 const end = n.t + (n.sus || 0);
                 if (end < t - window_) continue;
@@ -2132,6 +2172,7 @@ function createFactory() {
                 if (c.t > t + window_) continue;
                 if (c.t < t - 1) continue;
                 for (const cn of (c.notes || [])) {
+                    if (!_notePassesHandFilter(cn.h, _cfg.handFilter)) continue;
                     const end = c.t + (cn.sus || 0);
                     if (c.t <= t + window_ && end >= t - window_)
                         songActiveSet.add(noteToMidi(cn.s, cn.f));
@@ -2567,6 +2608,7 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         noteToMidi, midiToNoteName, isBlackKey, _neonRGB, _rgbStr,
         _wafFile, _wafVar, _wafUrl, _midiResolveSaved, _computeOctaveShift, _nearTermMidiRange,
+        _normalizeHand, _notePassesHandFilter,
         _gmForToneName, _activeToneNameAt,
         matchesArrangement: createFactory.matchesArrangement,
         _createFactory: createFactory,
