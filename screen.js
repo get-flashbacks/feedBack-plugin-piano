@@ -1578,11 +1578,11 @@ function createFactory() {
                 <div style="display:flex;align-items:center;gap:3px;font-size:11px;color:#999;">
                     <span>Hand</span>
                     <button class="piano-hand-btn" data-hand="both" type="button"
-                        style="background:#6366f1;border:1px solid #777;border-radius:4px;padding:2px 6px;color:#fff;font-size:10px;cursor:pointer;">Both</button>
+                        style="background:${_cfg.handFilter === 'both' ? '#6366f1' : '#1a1a2e'};border:1px solid ${_cfg.handFilter === 'both' ? '#777' : '#333'};border-radius:4px;padding:2px 6px;color:${_cfg.handFilter === 'both' ? '#fff' : '#aaa'};font-size:10px;cursor:pointer;">Both</button>
                     <button class="piano-hand-btn" data-hand="L" type="button"
-                        style="background:#1a1a2e;border:1px solid #333;border-radius:4px;padding:2px 6px;color:#aaa;font-size:10px;cursor:pointer;">LH</button>
+                        style="background:${_cfg.handFilter === 'L' ? '#6366f1' : '#1a1a2e'};border:1px solid ${_cfg.handFilter === 'L' ? '#777' : '#333'};border-radius:4px;padding:2px 6px;color:${_cfg.handFilter === 'L' ? '#fff' : '#aaa'};font-size:10px;cursor:pointer;">LH</button>
                     <button class="piano-hand-btn" data-hand="R" type="button"
-                        style="background:#1a1a2e;border:1px solid #333;border-radius:4px;padding:2px 6px;color:#aaa;font-size:10px;cursor:pointer;">RH</button>
+                        style="background:${_cfg.handFilter === 'R' ? '#6366f1' : '#1a1a2e'};border:1px solid ${_cfg.handFilter === 'R' ? '#777' : '#333'};border-radius:4px;padding:2px 6px;color:${_cfg.handFilter === 'R' ? '#fff' : '#aaa'};font-size:10px;cursor:pointer;">RH</button>
                 </div>
                 <div style="display:flex;align-items:center;gap:4px;">
                     <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:#999;cursor:pointer;">
