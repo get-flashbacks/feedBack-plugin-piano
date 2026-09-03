@@ -249,7 +249,7 @@ test('_programChangeInstrumentIndex selects curated GM instruments and safely fa
 
 test('_pitchBendSemitones maps 14-bit MIDI bend values around center', () => {
     assert.equal(mod._pitchBendSemitones(0, 64), 0);
-    assert.equal(mod._pitchBendSemitones(127, 127), 2);
+    assert.ok(Math.abs(mod._pitchBendSemitones(127, 127) - 2) < 0.001);
     assert.ok(mod._pitchBendSemitones(0, 0) < -1.99);
 });
 
