@@ -259,6 +259,11 @@ const NEON_RGB = [
 
 function _neonRGB(midi) { return NEON_RGB[_pmod12(midi)]; }
 
+function _keyboardGlowBlur(velocity, isBlack) {
+    const vel = velocity || 80;
+    return (isBlack ? 6 : 8) + (vel / 127) * (isBlack ? 14 : 16);
+}
+
 function _rgbStr(r, g, b, a) {
     return a !== undefined
         ? `rgba(${(r * 255) | 0},${(g * 255) | 0},${(b * 255) | 0},${a})`
@@ -2205,8 +2210,9 @@ function createFactory() {
             }
 
             if (pressed) {
+                const vel = playerHeld ? (_heldNotes.get(k.midi) || 80) : 80;
                 ctx.shadowColor = _rgbStr(fr, fg, fb);
-                ctx.shadowBlur = 12;
+                ctx.shadowBlur = _keyboardGlowBlur(vel, false);
                 ctx.fillStyle = 'rgba(0,0,0,0)';
                 _roundRectBottom(ctx, k.x, kbTop + pressOffset, kw, kbH - pressOffset, cornerR);
                 ctx.fill();
@@ -2277,8 +2283,9 @@ function createFactory() {
             }
 
             if (pressed) {
+                const vel = playerHeld ? (_heldNotes.get(k.midi) || 80) : 80;
                 ctx.shadowColor = _rgbStr(fr, fg, fb);
-                ctx.shadowBlur = 10;
+                ctx.shadowBlur = _keyboardGlowBlur(vel, true);
                 ctx.fillStyle = 'rgba(0,0,0,0)';
                 _roundRectBottom(ctx, k.x, kbTop + pressOffset, k.w, blackH - pressOffset, 3);
                 ctx.fill();
@@ -2567,7 +2574,7 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         noteToMidi, midiToNoteName, isBlackKey, _neonRGB, _rgbStr,
         _wafFile, _wafVar, _wafUrl, _midiResolveSaved, _computeOctaveShift, _nearTermMidiRange,
-        _gmForToneName, _activeToneNameAt,
+        _gmForToneName, _activeToneNameAt, _keyboardGlowBlur,
         matchesArrangement: createFactory.matchesArrangement,
         _createFactory: createFactory,
     };
