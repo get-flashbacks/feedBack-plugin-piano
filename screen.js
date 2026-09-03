@@ -47,6 +47,7 @@ const HIT_TOLERANCE = 0.10;        // seconds
 // that need it actually arrive.
 const OCTAVE_AUTO_LOOKAHEAD_SEC = 0.5;
 const OCTAVE_CUE_LOOKAHEAD_SEC = 1.5;
+const PITCH_BEND_RANGE_ST = 2;
 
 // ── Persisted settings ───────────────────────────────────────────────
 
@@ -142,6 +143,8 @@ let _audioCtx = null;
 let _synthPlayer = null;
 let _synthPreset = null;
 let _synthGain = null;
+let _modValue = 0;
+let _pitchBendSemitonesValue = 0;
 const _noteEnvelopes = new Map();   // shared: transposed midi → envelope
 let _playerScriptLoaded = false;
 // Bumped on every _synthLoadInstrumentByGm call; a load only commits its
@@ -158,6 +161,19 @@ let _synthLoadGeneration = 0;
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 function noteToMidi(string, fret) { return string * 24 + fret; }
+
+function _programChangeInstrumentIndex(program) {
+    const p = Number(program);
+    if (!Number.isFinite(p)) return 0;
+    const exact = INSTRUMENTS.findIndex(inst => inst.gm === p);
+    return exact >= 0 ? exact : ((p % INSTRUMENTS.length) + INSTRUMENTS.length) % INSTRUMENTS.length;
+}
+
+function _pitchBendSemitones(lsb, msb) {
+    const raw14 = ((Number(msb) & 0x7F) << 7) | (Number(lsb) & 0x7F);
+    return ((raw14 - 8192) / 8192) * PITCH_BEND_RANGE_ST;
+}
+
 
 // Picks the whole-octave shift (multiple of 12 semitones) that best fits
 // the controller's playable range [controllerLo, controllerHi] against a
@@ -437,8 +453,9 @@ function _synthNoteOn(midi, velocity) {
     if (existing) { try { existing.cancel(); } catch (_) {} }
 
     const vol = (velocity / 127) * _cfg.synthVolume;
+    const pitchedMidi = Math.max(0, Math.min(127, midi + _pitchBendSemitonesValue));
     const envelope = _synthPlayer.queueWaveTable(
-        _audioCtx, _synthGain, _synthPreset, 0, midi, 999, vol
+        _audioCtx, _synthGain, _synthPreset, 0, pitchedMidi, 999, vol
     );
     _noteEnvelopes.set(midi, envelope);
 }
@@ -696,6 +713,22 @@ function _midiOnMessage(e) {
     if (_cfg.midiChannel >= 0 && ch !== _cfg.midiChannel) return;
 
     const cmd = status & 0xF0;
+
+    if (cmd === 0xB0 && note === 1) {
+        _modValue = velocity / 127;
+        return;
+    }
+    if (cmd === 0xC0) {
+        const idx = _programChangeInstrumentIndex(note);
+        _cfg.instrumentIdx = idx;
+        _saveCfg('instrumentIdx', idx);
+        _synthLoadInstrument(idx);
+        return;
+    }
+    if (cmd === 0xE0) {
+        _pitchBendSemitonesValue = _pitchBendSemitones(note, velocity);
+        return;
+    }
 
     // Pass the RAW MIDI note number to instance handlers; the
     // instance applies transpose internally and remembers the
@@ -2567,6 +2600,7 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         noteToMidi, midiToNoteName, isBlackKey, _neonRGB, _rgbStr,
         _wafFile, _wafVar, _wafUrl, _midiResolveSaved, _computeOctaveShift, _nearTermMidiRange,
+        _programChangeInstrumentIndex, _pitchBendSemitones,
         _gmForToneName, _activeToneNameAt,
         matchesArrangement: createFactory.matchesArrangement,
         _createFactory: createFactory,
