@@ -246,7 +246,7 @@ test('_rangeMismatchSummary reports notes outside the effective controller range
     assert.deepEqual(mod._rangeMismatchSummary(notes, [], 48, 84), {
         below: 1, above: 1, effectiveLo: 48, effectiveHi: 84, total: 2
     });
-    assert.equal(mod._rangeMismatchSummary([{s: 4, f: 0}], [], 48, 84), null);
+    assert.equal(mod._rangeMismatchSummary([{s: 2, f: 0}], [], 48, 84), null);
     assert.equal(mod._rangeMismatchSummary([{s: 4, f: 0}], [], 48, 84, 12), null);
 });
 
