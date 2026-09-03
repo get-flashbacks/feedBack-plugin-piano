@@ -241,6 +241,15 @@ test('_rgbStr formats rgb() without alpha and rgba() with it', () => {
     assert.equal(mod._rgbStr(0, 0, 0, 0), 'rgba(0,0,0,0)');
 });
 
+test('_rangeMismatchSummary reports notes outside the effective controller range', () => {
+    const notes = [{s: 1, f: 0}, {s: 2, f: 0}, {s: 4, f: 0}];
+    assert.deepEqual(mod._rangeMismatchSummary(notes, [], 48, 84), {
+        below: 1, above: 1, effectiveLo: 48, effectiveHi: 84, total: 2
+    });
+    assert.equal(mod._rangeMismatchSummary([{s: 4, f: 0}], [], 48, 84), null);
+    assert.equal(mod._rangeMismatchSummary([{s: 4, f: 0}], [], 48, 84, 12), null);
+});
+
 test('_wafFile/_wafVar/_wafUrl derive consistent names from a GM program number', () => {
     assert.equal(mod._wafFile(0), '0000_JCLive_sf2_file');
     assert.equal(mod._wafFile(19), '0190_JCLive_sf2_file');
