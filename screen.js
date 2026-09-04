@@ -136,6 +136,7 @@ let _activeInstance = null;
 // Registry of live factory instances so module-level helpers (device-
 // list refresh, shutdown-when-last-destroys) can iterate.
 const _instances = new Set();
+const _handFilterPanels = new Set();
 // Monotonic id for per-instance DOM tagging (useful for debugging).
 let _nextInstanceId = 0;
 
@@ -1219,6 +1220,7 @@ function createFactory() {
 
         if (notes) {
             for (const n of notes) {
+                if (!_notePassesHandFilter(n.h, _cfg.handFilter)) continue;
                 if (n.t > t + HIT_TOLERANCE + 0.5) break;
                 if (n.t < t - HIT_TOLERANCE - 0.5) continue;
                 const songMidi = noteToMidi(n.s, n.f);
@@ -1236,6 +1238,7 @@ function createFactory() {
                 if (c.t > t + HIT_TOLERANCE + 0.5) break;
                 if (c.t < t - HIT_TOLERANCE - 0.5) continue;
                 for (const cn of (c.notes || [])) {
+                    if (!_notePassesHandFilter(cn.h, _cfg.handFilter)) continue;
                     const songMidi = noteToMidi(cn.s, cn.f);
                     const key = _noteKey(c.t, songMidi);
                     if (songMidi === playedMidi && Math.abs(c.t - t) <= HIT_TOLERANCE && !_hitNoteKeys.has(key)) {
@@ -1667,14 +1670,17 @@ function createFactory() {
         for (const btn of panel.querySelectorAll('.piano-hand-btn')) {
             btn.onclick = function () {
                 _saveCfg('handFilter', this.dataset.hand);
-                for (const sibling of panel.querySelectorAll('.piano-hand-btn')) {
-                    const active = sibling.dataset.hand === _cfg.handFilter;
-                    sibling.style.background = active ? '#6366f1' : '#1a1a2e';
-                    sibling.style.borderColor = active ? '#777' : '#333';
-                    sibling.style.color = active ? '#fff' : '#aaa';
+                for (const openPanel of _handFilterPanels) {
+                    for (const sibling of openPanel.querySelectorAll('.piano-hand-btn')) {
+                        const active = sibling.dataset.hand === _cfg.handFilter;
+                        sibling.style.background = active ? '#6366f1' : '#1a1a2e';
+                        sibling.style.borderColor = active ? '#777' : '#333';
+                        sibling.style.color = active ? '#fff' : '#aaa';
+                    }
                 }
             };
         }
+        _handFilterPanels.add(panel);
         panel.querySelector('.piano-chk-octfit').onchange = function () {
             _saveCfg('octaveFit', this.checked);
         };
@@ -1690,6 +1696,7 @@ function createFactory() {
 
     function _removeSettingsPanel() {
         if (_settingsPanel) {
+            _handFilterPanels.delete(_settingsPanel);
             _settingsPanel.remove();
             _settingsPanel = null;
         }
@@ -2064,7 +2071,7 @@ function createFactory() {
                 if (dt > VISIBLE_SECONDS + 1) break;
                 if (dt < -1 && (n.t + (n.sus || 0)) < t - 0.5) continue;
                 if (!_notePassesHandFilter(n.h, _cfg.handFilter)) continue;
-                allNotes.push({ midi: noteToMidi(n.s, n.f), t: n.t, sus: n.sus || 0, accent: n.ac, hand: _normalizeHand(n.h) });
+                allNotes.push({ midi: noteToMidi(n.s, n.f), t: n.t, sus: n.sus || 0, accent: n.ac });
             }
         }
         if (chords) {
@@ -2074,7 +2081,7 @@ function createFactory() {
                 if (dt < -1) continue;
                 for (const cn of (c.notes || [])) {
                     if (!_notePassesHandFilter(cn.h, _cfg.handFilter)) continue;
-                    allNotes.push({ midi: noteToMidi(cn.s, cn.f), t: c.t, sus: cn.sus || 0, accent: cn.ac, hand: _normalizeHand(cn.h) });
+                    allNotes.push({ midi: noteToMidi(cn.s, cn.f), t: c.t, sus: cn.sus || 0, accent: cn.ac });
                 }
             }
         }
