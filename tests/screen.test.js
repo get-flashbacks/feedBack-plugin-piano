@@ -250,6 +250,30 @@ test('_rangeMismatchSummary reports notes outside the effective controller range
     assert.equal(mod._rangeMismatchSummary([{s: 4, f: 0}], [], 48, 84, 12), null);
 });
 
+test('_nearTermMismatchSummary scans only the auto-shift lookahead window', () => {
+    // First passage [48,60] in the window, later passage [96,108] far ahead —
+    // auto-shift will have climbed by then, so the whole-chart scan counts the
+    // later passage as missed while the current shift (0) still reaches it.
+    const notes = [
+        {s: 2, f: 0, t: 0},   // 48
+        {s: 2, f: 12, t: 0.1}, // 60
+        {s: 4, f: 0, t: 100},  // 96
+        {s: 4, f: 12, t: 100}, // 108
+    ];
+    assert.equal(mod._nearTermMismatchSummary(notes, [], 36, 60, 0, 0, 0.5), null);
+});
+
+test('_nearTermMismatchSummary reports a window wider than the controller span', () => {
+    const notes = [
+        {s: 2, f: 0, t: 0},   // 48
+        {s: 3, f: 0, t: 0.1}, // 72
+        {s: 3, f: 12, t: 0.2}, // 84 — 3 octaves in a 2-octave controller
+    ];
+    assert.deepEqual(mod._nearTermMismatchSummary(notes, [], 36, 60, 0, 0, 0.5), {
+        below: 0, above: 1, effectiveLo: 48, effectiveHi: 72, total: 1
+    });
+});
+
 test('_controllerRangeOverlayBounds maps a detected range onto visible keys', () => {
     const layout = [
         {midi: 48, x: 0, w: 10}, {midi: 60, x: 100, w: 10}, {midi: 72, x: 200, w: 10}

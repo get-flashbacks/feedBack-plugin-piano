@@ -873,6 +873,22 @@ function _rangeMismatchSummary(notes, chords, controllerLo, controllerHi, transp
     return { below, above, effectiveLo, effectiveHi, total: below + above };
 }
 
+// In auto mode the octave shift retargets the near-term lookahead window
+// (the span auto-shift actually guarantees, see _nearTermMidiRange), so a
+// whole-chart scan against the current shift would flag later passages as
+// missed that the shift reaches in time. Scan only that window, matched
+// against the shift computed for it.
+function _nearTermMismatchSummary(notes, chords, controllerLo, controllerHi, transpose, t, lookaheadSec) {
+    const inWindow = (x) => x.t >= t - 0.1 && x.t <= t + lookaheadSec;
+    const near = _nearTermMidiRange(notes || [], chords || [], t, lookaheadSec);
+    const shift = _computeOctaveShift(controllerLo, controllerHi, near ? near.lo : null, near ? near.hi : null);
+    return _rangeMismatchSummary(
+        (notes || []).filter(inWindow),
+        (chords || []).filter(inWindow),
+        controllerLo, controllerHi, transpose + shift
+    );
+}
+
 function _visibleMidiRange(notes, chords, t) {
     let lo = 127, hi = 0;
     const tMax = t + VISIBLE_SECONDS;
@@ -1518,11 +1534,13 @@ function createFactory() {
         // reachable, so it must widen the effective range here too — not
         // just the manual transpose — or the badge reports notes as missed
         // that auto-shift already fixed.
-        const appliedShift = (_cfg.octaveFit && _cfg.octaveMode === 'auto') ? _octaveShift : 0;
-        const summary = _rangeMismatchSummary(
-            _latestNotes, _latestChords, _cfg.controllerLo, _cfg.controllerHi,
-            _cfg.transpose + appliedShift
-        );
+        const summary = (_cfg.octaveFit && _cfg.octaveMode === 'auto')
+            ? _nearTermMismatchSummary(
+                _latestNotes, _latestChords, _cfg.controllerLo, _cfg.controllerHi,
+                _cfg.transpose, _latestTime, OCTAVE_AUTO_LOOKAHEAD_SEC)
+            : _rangeMismatchSummary(
+                _latestNotes, _latestChords, _cfg.controllerLo, _cfg.controllerHi,
+                _cfg.transpose);
         const message = summary
             ? `Controller range misses ${summary.below} low and ${summary.above} high chart note${summary.total === 1 ? '' : 's'} (effective MIDI ${summary.effectiveLo}–${summary.effectiveHi}).`
             : '';
@@ -2665,7 +2683,7 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         noteToMidi, midiToNoteName, isBlackKey, _neonRGB, _rgbStr,
         _wafFile, _wafVar, _wafUrl, _midiResolveSaved, _computeOctaveShift, _nearTermMidiRange,
-        _rangeMismatchSummary,
+        _rangeMismatchSummary, _nearTermMismatchSummary,
         _controllerRangeOverlayBounds,
         _gmForToneName, _activeToneNameAt,
         matchesArrangement: createFactory.matchesArrangement,
