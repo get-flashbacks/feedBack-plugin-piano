@@ -279,6 +279,47 @@ test('_approachAlpha filters wire-shaped notes/chords by the active hand filter'
     assert.ok(rMod._approachAlpha(0, null, rhChord, 0.9) > 0, 'RH chord note still visible under an R-only filter');
 });
 
+test('_rangeMismatchSummary reports notes outside the effective controller range', () => {
+    const notes = [{s: 1, f: 0}, {s: 2, f: 0}, {s: 4, f: 0}];
+    assert.deepEqual(mod._rangeMismatchSummary(notes, [], 48, 84), {
+        below: 1, above: 1, effectiveLo: 48, effectiveHi: 84, total: 2
+    });
+    assert.equal(mod._rangeMismatchSummary([{s: 2, f: 0}], [], 48, 84), null);
+    assert.equal(mod._rangeMismatchSummary([{s: 4, f: 0}], [], 48, 84, 12), null);
+});
+
+test('_nearTermMismatchSummary scans only the auto-shift lookahead window', () => {
+    // First passage [48,60] in the window, later passage [96,108] far ahead —
+    // auto-shift will have climbed by then, so the whole-chart scan counts the
+    // later passage as missed while the current shift (0) still reaches it.
+    const notes = [
+        {s: 2, f: 0, t: 0},   // 48
+        {s: 2, f: 12, t: 0.1}, // 60
+        {s: 4, f: 0, t: 100},  // 96
+        {s: 4, f: 12, t: 100}, // 108
+    ];
+    assert.equal(mod._nearTermMismatchSummary(notes, [], 36, 60, 0, 0, 0.5), null);
+});
+
+test('_nearTermMismatchSummary reports a window wider than the controller span', () => {
+    const notes = [
+        {s: 2, f: 0, t: 0},   // 48
+        {s: 3, f: 0, t: 0.1}, // 72
+        {s: 3, f: 12, t: 0.2}, // 84 — 3 octaves in a 2-octave controller
+    ];
+    assert.deepEqual(mod._nearTermMismatchSummary(notes, [], 36, 60, 0, 0, 0.5), {
+        below: 0, above: 1, effectiveLo: 48, effectiveHi: 72, total: 1
+    });
+});
+
+test('_keyboardGlowBlur scales white and black key glow by velocity', () => {
+    assert.equal(mod._keyboardGlowBlur(1, false), 8 + (1 / 127) * 16);
+    assert.equal(mod._keyboardGlowBlur(127, false), 24);
+    assert.equal(mod._keyboardGlowBlur(1, true), 6 + (1 / 127) * 14);
+    assert.equal(mod._keyboardGlowBlur(127, true), 20);
+    assert.equal(mod._keyboardGlowBlur(0, false), mod._keyboardGlowBlur(32, false));
+});
+
 test('_programChangeInstrumentIndex selects curated GM instruments and safely falls back', () => {
     assert.equal(mod._programChangeInstrumentIndex(0), 0);
     assert.equal(mod._programChangeInstrumentIndex(4), 1);
