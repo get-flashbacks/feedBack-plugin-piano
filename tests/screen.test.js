@@ -36,20 +36,38 @@ function createElement(tagName, ownerDocument) {
         textContent: '',
         _innerHTML: '',
         _classLookup: new Map(),
+        _classElements: [],
+        _context: null,
         get innerHTML() { return this._innerHTML; },
         set innerHTML(value) {
             this._innerHTML = String(value);
             this._classLookup.clear();
-            const classNames = this._innerHTML.match(/class="([^"]+)"/g) || [];
-            for (const raw of classNames) {
-                for (const cls of raw.slice(7, -1).split(/\s+/).filter(Boolean)) {
-                    if (!this._classLookup.has(cls)) {
-                        const child = createElement('input', ownerDocument);
-                        child.className = cls;
-                        child.value = '';
-                        child.checked = false;
-                        this._classLookup.set(cls, child);
+            this._classElements.length = 0;
+            const tags = this._innerHTML.matchAll(/<([a-z][\w-]*)\b([^>]*\bclass="([^"]+)"[^>]*)>/gi);
+            for (const [, tag, attrs, className] of tags) {
+                const child = createElement(tag, ownerDocument);
+                child.className = className;
+                child.value = (attrs.match(/\bvalue="([^"]*)"/) || [])[1] || '';
+                child.checked = /\bchecked(?:\s|>|$)/.test(attrs);
+
+                for (const [, key, attrValue] of attrs.matchAll(/\bdata-([\w-]+)="([^"]*)"/g)) {
+                    child.dataset[key.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = attrValue;
+                }
+                const inlineStyle = (attrs.match(/\bstyle="([^"]*)"/) || [])[1];
+                if (inlineStyle) {
+                    child.style.cssText = inlineStyle;
+                    for (const declaration of inlineStyle.split(';')) {
+                        const colon = declaration.indexOf(':');
+                        if (colon === -1) continue;
+                        const property = declaration.slice(0, colon).trim()
+                            .replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+                        if (property) child.style[property] = declaration.slice(colon + 1).trim();
                     }
+                }
+
+                this._classElements.push(child);
+                for (const cls of className.split(/\s+/).filter(Boolean)) {
+                    if (!this._classLookup.has(cls)) this._classLookup.set(cls, child);
                 }
             }
         },
@@ -79,6 +97,10 @@ function createElement(tagName, ownerDocument) {
         setAttribute(name, value) { this.attributes[name] = String(value); },
         querySelectorAll(selector) {
             if (selector === ':scope > button') return this.children.filter(c => c.tagName === 'BUTTON');
+            if (selector && selector.startsWith('.')) {
+                const cls = selector.slice(1);
+                return this._classElements.filter(child => child.className.split(/\s+/).includes(cls));
+            }
             return [];
         },
         querySelector(selector) {
@@ -87,14 +109,17 @@ function createElement(tagName, ownerDocument) {
         },
         getContext(type) {
             if (tagName !== 'canvas' || type !== '2d') return null;
-            return {
+            if (this._context) return this._context;
+            this._context = {
                 canvas: this,
+                fillTextCalls: [],
                 setTransform() {},
                 fillRect() {},
-                fillText() {},
+                fillText(text, x, y) { this.fillTextCalls.push({ text, x, y }); },
                 measureText(text) { return { width: String(text).length * 6 }; },
                 createLinearGradient() { return { addColorStop() {} }; },
                 beginPath() {},
+                arc() {},
                 moveTo() {},
                 lineTo() {},
                 quadraticCurveTo() {},
@@ -102,6 +127,7 @@ function createElement(tagName, ownerDocument) {
                 fill() {},
                 stroke() {},
             };
+            return this._context;
         },
     };
     return el;
@@ -122,7 +148,7 @@ function createDocument() {
                 if (!el) return;
                 if (String(el.className || '').split(/\s+/).includes(cls)) out.push(el);
                 for (const child of el.children || []) visit(child);
-                for (const child of el._classLookup ? el._classLookup.values() : []) visit(child);
+                for (const child of el._classElements || []) visit(child);
             };
             for (const el of Object.values(this.elementsById)) visit(el);
             return out;
@@ -179,11 +205,15 @@ function installBrowserHarness(options = {}) {
         cancelAnimationFrame(id) { rafs.delete(id); },
     };
     global.document = doc;
-    global.localStorage = { getItem: () => null, setItem: () => {} };
+    const storage = new Map(Object.entries(options.storage || {}));
+    global.localStorage = {
+        getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+        setItem(key, value) { storage.set(key, String(value)); },
+    };
     global.requestAnimationFrame = global.window.requestAnimationFrame;
     global.cancelAnimationFrame = global.window.cancelAnimationFrame;
     global.performance = { now: () => 0 };
-    return { doc, windowListeners, rafs };
+    return { doc, windowListeners, rafs, storage };
 }
 
 function freshPlugin(options = {}) {
@@ -241,18 +271,42 @@ test('_rgbStr formats rgb() without alpha and rgba() with it', () => {
     assert.equal(mod._rgbStr(0, 0, 0, 0), 'rgba(0,0,0,0)');
 });
 
-test('_normalizeHand accepts left/right hand metadata', () => {
-    assert.equal(mod._normalizeHand('L'), 'L');
-    assert.equal(mod._normalizeHand('left'), 'L');
-    assert.equal(mod._normalizeHand('rh'), 'R');
-    assert.equal(mod._normalizeHand('unknown'), null);
+test('_normalizeHand accepts every supported alias without case or whitespace sensitivity', () => {
+    for (const value of ['L', 'l', 'LH', 'lh', 'left', ' LEFT ']) {
+        assert.equal(mod._normalizeHand(value), 'L', `expected ${JSON.stringify(value)} to be left`);
+    }
+    for (const value of ['R', 'r', 'RH', 'rh', 'right', '\tRight\n']) {
+        assert.equal(mod._normalizeHand(value), 'R', `expected ${JSON.stringify(value)} to be right`);
+    }
 });
 
-test('_notePassesHandFilter keeps unlabelled notes visible and filters selected hand', () => {
-    assert.equal(mod._notePassesHandFilter('L', 'both'), true);
-    assert.equal(mod._notePassesHandFilter('R', 'L'), false);
-    assert.equal(mod._notePassesHandFilter('lh', 'L'), true);
-    assert.equal(mod._notePassesHandFilter(null, 'R'), true);
+test('_normalizeHand rejects absent, unknown, and partial metadata', () => {
+    for (const value of [undefined, null, '', 'unknown', 'left-hand', 'right hand', 0, false]) {
+        assert.equal(mod._normalizeHand(value), null, `expected ${JSON.stringify(value)} to be unknown`);
+    }
+});
+
+test('_notePassesHandFilter covers both selected-hand matrices', () => {
+    const cases = [
+        { hand: 'L', left: true, right: false },
+        { hand: 'lh', left: true, right: false },
+        { hand: 'R', left: false, right: true },
+        { hand: 'right', left: false, right: true },
+        // Charts predating hand metadata must remain playable in either mode.
+        { hand: null, left: true, right: true },
+        { hand: 'unknown', left: true, right: true },
+    ];
+    for (const { hand, left, right } of cases) {
+        assert.equal(mod._notePassesHandFilter(hand, 'L'), left, `hand=${hand}, filter=L`);
+        assert.equal(mod._notePassesHandFilter(hand, 'R'), right, `hand=${hand}, filter=R`);
+    }
+});
+
+test('_notePassesHandFilter treats both and invalid filter values as unfiltered', () => {
+    for (const filter of ['both', 'L ', 'left', '', null, undefined]) {
+        assert.equal(mod._notePassesHandFilter('L', filter), true, `left note, filter=${filter}`);
+        assert.equal(mod._notePassesHandFilter('R', filter), true, `right note, filter=${filter}`);
+    }
 });
 
 test('_controllerRangeOverlayBounds maps a detected range onto visible keys', () => {
@@ -471,6 +525,22 @@ function openSettingsPanel(harness) {
     return panel;
 }
 
+function handButtons(panel) {
+    return Object.fromEntries(
+        panel.querySelectorAll('.piano-hand-btn').map(button => [button.dataset.hand, button])
+    );
+}
+
+function assertActiveHand(panel, expected) {
+    const buttons = handButtons(panel);
+    assert.deepEqual(Object.keys(buttons).sort(), ['L', 'R', 'both']);
+    for (const [hand, button] of Object.entries(buttons)) {
+        const active = hand === expected;
+        assert.equal(button.style.background, active ? '#6366f1' : '#1a1a2e', `${hand} background`);
+        assert.equal(button.style.color, active ? '#fff' : '#aaa', `${hand} color`);
+    }
+}
+
 function replaceCanvas(harness, oldCanvas) {
     const player = harness.doc.elementsById.player;
     const next = harness.doc.createElement('canvas');
@@ -480,6 +550,146 @@ function replaceCanvas(harness, oldCanvas) {
     window.dispatchEvent({ type: 'highway:canvas-replaced', detail: { oldCanvas, canvas: next } });
     return next;
 }
+
+test('hand filter settings restore a persisted selection and save button changes', () => {
+    const { harness, renderer } = initRendererWithHarness({
+        storage: { piano_hand_filter: 'R' },
+    });
+    const panel = openSettingsPanel(harness);
+
+    assertActiveHand(panel, 'R');
+    handButtons(panel).L.onclick();
+
+    assertActiveHand(panel, 'L');
+    assert.equal(harness.storage.get('piano_hand_filter'), 'L');
+
+    renderer.destroy();
+});
+
+test('invalid persisted hand filter values safely fall back to Both', () => {
+    const { harness, renderer } = initRendererWithHarness({
+        storage: { piano_hand_filter: 'left' },
+    });
+
+    assertActiveHand(openSettingsPanel(harness), 'both');
+
+    renderer.destroy();
+});
+
+test('hand filter buttons synchronize open panels and destroyed panels leave the registry', () => {
+    const harness = installBrowserHarness();
+    const file = path.join(__dirname, '..', 'screen.js');
+    delete require.cache[require.resolve(file)];
+    const plugin = require(file);
+    const renderers = [plugin._createFactory(), plugin._createFactory()];
+
+    for (const renderer of renderers) {
+        const canvas = harness.doc.createElement('canvas');
+        harness.doc.elementsById.player.appendChild(canvas);
+        renderer.init(canvas);
+    }
+
+    const gears = harness.doc.elementsById['player-controls'].children
+        .filter(el => el.className.includes('btn-piano-settings'));
+    assert.equal(gears.length, 2);
+    gears[0].onclick();
+    gears[1].onclick();
+
+    const panels = harness.doc.elementsById.player.children
+        .filter(el => el.className === 'piano-settings-panel');
+    assert.equal(panels.length, 2);
+    handButtons(panels[0]).L.onclick();
+    assertActiveHand(panels[0], 'L');
+    assertActiveHand(panels[1], 'L');
+
+    renderers[0].destroy();
+    assert.equal(panels[0].parentNode, null);
+    handButtons(panels[1]).R.onclick();
+    assertActiveHand(panels[1], 'R');
+    assertActiveHand(panels[0], 'L');
+
+    renderers[1].destroy();
+});
+
+test('renderer filters labelled single and chord notes while retaining unlabelled notes', () => {
+    const { harness, renderer } = initRendererWithHarness({
+        storage: { piano_hand_filter: 'R', piano_auto_tone: 'false' },
+    });
+    const panel = openSettingsPanel(harness);
+    const overlay = harness.doc.elementsById.player.children
+        .find(el => el.className === 'piano-highway-canvas');
+    const ctx = overlay.getContext('2d');
+    const bundle = {
+        isReady: true,
+        currentTime: 0,
+        beats: [],
+        notes: [
+            { t: 0.5, s: 2, f: 12, sus: 1, h: 'L' }, // C4, filtered initially
+            { t: 0.5, s: 2, f: 19, sus: 1 },          // G4, legacy/unlabelled
+        ],
+        chords: [
+            { t: 0.5, notes: [{ s: 2, f: 16, sus: 1, h: 'left' }] }, // E4
+        ],
+    };
+
+    renderer.draw(bundle);
+    let labels = ctx.fillTextCalls.map(call => call.text);
+    assert.equal(labels.filter(label => label === 'E4').length, 0, 'left chord note should be hidden');
+    assert.equal(labels.filter(label => label === 'G4').length, 2, 'unlabelled note should remain visible');
+
+    handButtons(panel).L.onclick();
+    ctx.fillTextCalls.length = 0;
+    renderer.draw(bundle);
+    labels = ctx.fillTextCalls.map(call => call.text);
+    assert.equal(labels.filter(label => label === 'C4').length, 3, 'left single note should render two labels plus its key label');
+    assert.equal(labels.filter(label => label === 'E4').length, 2, 'left chord note should render both labels');
+    assert.equal(labels.filter(label => label === 'G4').length, 2, 'unlabelled note should remain visible');
+
+    renderer.destroy();
+});
+
+test('hit detection scores only the selected hand and still accepts unlabelled notes', () => {
+    const { harness, renderer } = initRendererWithHarness({
+        storage: {
+            piano_hand_filter: 'L',
+            piano_hit_detect: 'true',
+            piano_auto_tone: 'false',
+        },
+    });
+    const overlay = harness.doc.elementsById.player.children
+        .find(el => el.className === 'piano-highway-canvas');
+    const ctx = overlay.getContext('2d');
+    const bundle = {
+        isReady: true,
+        currentTime: 1,
+        beats: [],
+        notes: [
+            { t: 1, s: 2, f: 12, h: 'L' }, // C4
+            { t: 1, s: 2, f: 19 },         // G4, legacy/unlabelled
+        ],
+        chords: [
+            { t: 1, notes: [{ s: 2, f: 16, h: 'R' }] }, // E4
+        ],
+    };
+    const latestHud = () => ctx.fillTextCalls
+        .map(call => call.text)
+        .findLast(text => String(text).startsWith('Accuracy:'));
+
+    renderer.draw(bundle);
+    renderer._handleNoteOn(64, 100);
+    renderer.draw(bundle);
+    assert.match(latestHud(), /Accuracy: 0%.*0\/1$/, 'filtered right-hand chord should not score as a hit');
+
+    renderer._handleNoteOn(60, 100);
+    renderer.draw(bundle);
+    assert.match(latestHud(), /Accuracy: 50%.*1\/2$/, 'selected left-hand note should score as a hit');
+
+    renderer._handleNoteOn(67, 100);
+    renderer.draw(bundle);
+    assert.match(latestHud(), /Accuracy: 67%.*2\/3$/, 'unlabelled note should remain hittable');
+
+    renderer.destroy();
+});
 
 test('renderer lifecycle events register and remove through the window backend', () => {
     const { harness, renderer } = initRendererWithHarness();
