@@ -241,6 +241,14 @@ test('_rgbStr formats rgb() without alpha and rgba() with it', () => {
     assert.equal(mod._rgbStr(0, 0, 0, 0), 'rgba(0,0,0,0)');
 });
 
+test('_keyboardGlowBlur scales white and black key glow by velocity', () => {
+    assert.equal(mod._keyboardGlowBlur(1, false), 8 + (1 / 127) * 16);
+    assert.equal(mod._keyboardGlowBlur(127, false), 24);
+    assert.equal(mod._keyboardGlowBlur(1, true), 6 + (1 / 127) * 14);
+    assert.equal(mod._keyboardGlowBlur(127, true), 20);
+    assert.equal(mod._keyboardGlowBlur(0, false), mod._keyboardGlowBlur(32, false));
+});
+
 test('_programChangeInstrumentIndex selects curated GM instruments and safely falls back', () => {
     assert.equal(mod._programChangeInstrumentIndex(0), 0);
     assert.equal(mod._programChangeInstrumentIndex(4), 1);
