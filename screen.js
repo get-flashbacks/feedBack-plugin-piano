@@ -275,6 +275,14 @@ const NEON_RGB = [
 
 function _neonRGB(midi) { return NEON_RGB[_pmod12(midi)]; }
 
+function _keyboardGlowBlur(velocity, isBlack) {
+    // Default velocity for chart-active keys with no physically held MIDI
+    // note. 32 reproduces the pre-velocity-glow fixed blur values (white
+    // 12, black ~10) rather than 80's much wider ~18/~15 (see PR #24 review).
+    const vel = velocity || 32;
+    return (isBlack ? 6 : 8) + (vel / 127) * (isBlack ? 14 : 16);
+}
+
 function _rgbStr(r, g, b, a) {
     return a !== undefined
         ? `rgba(${(r * 255) | 0},${(g * 255) | 0},${(b * 255) | 0},${a})`
@@ -2361,8 +2369,9 @@ function createFactory() {
             }
 
             if (pressed) {
+                const vel = playerHeld ? (_heldNotes.get(k.midi) || 32) : 32;
                 ctx.shadowColor = _rgbStr(fr, fg, fb);
-                ctx.shadowBlur = 12;
+                ctx.shadowBlur = _keyboardGlowBlur(vel, false);
                 ctx.fillStyle = 'rgba(0,0,0,0)';
                 _roundRectBottom(ctx, k.x, kbTop + pressOffset, kw, kbH - pressOffset, cornerR);
                 ctx.fill();
@@ -2433,8 +2442,9 @@ function createFactory() {
             }
 
             if (pressed) {
+                const vel = playerHeld ? (_heldNotes.get(k.midi) || 32) : 32;
                 ctx.shadowColor = _rgbStr(fr, fg, fb);
-                ctx.shadowBlur = 10;
+                ctx.shadowBlur = _keyboardGlowBlur(vel, true);
                 ctx.fillStyle = 'rgba(0,0,0,0)';
                 _roundRectBottom(ctx, k.x, kbTop + pressOffset, k.w, blackH - pressOffset, 3);
                 ctx.fill();
@@ -2726,7 +2736,7 @@ if (typeof module !== 'undefined' && module.exports) {
         _rangeMismatchSummary, _nearTermMismatchSummary,
         _programChangeInstrumentIndex, _pitchBendSemitones,
         _controllerRangeOverlayBounds,
-        _gmForToneName, _activeToneNameAt,
+        _gmForToneName, _activeToneNameAt, _keyboardGlowBlur,
         matchesArrangement: createFactory.matchesArrangement,
         _createFactory: createFactory,
     };
