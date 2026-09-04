@@ -459,7 +459,7 @@ function _synthNoteOn(midi, velocity) {
     // such hook, so instead the wheel drives a volume swell (0-30% boost
     // at full modulation), which is at least an audible, testable effect
     // rather than the write-only _modValue this started as.
-    const vol = (velocity / 127) * _cfg.synthVolume * (1 + _modValue * 0.3);
+    const vol = Math.min(1, (velocity / 127) * _cfg.synthVolume * (1 + _modValue * 0.3));
     const pitchedMidi = Math.max(0, Math.min(127, midi + _pitchBendSemitonesValue));
     const envelope = _synthPlayer.queueWaveTable(
         _audioCtx, _synthGain, _synthPreset, 0, pitchedMidi, 999, vol
