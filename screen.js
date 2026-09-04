@@ -901,7 +901,7 @@ function _approachAlpha(midi, notes, chords, t) {
     let closest = Infinity;
     if (notes) {
         for (const n of notes) {
-            if (!_notePassesHandFilter(n.h, _cfg.handFilter)) continue;
+            if (!_notePassesHandFilter(n.hand, _cfg.handFilter)) continue;
             if (n.t < t - 0.05) continue;
             if (n.t > t + lookAhead) break;
             if (noteToMidi(n.s, n.f) === midi) {
@@ -914,7 +914,7 @@ function _approachAlpha(midi, notes, chords, t) {
             if (c.t < t - 0.05) continue;
             if (c.t > t + lookAhead) break;
             for (const cn of (c.notes || [])) {
-                if (!_notePassesHandFilter(cn.h, _cfg.handFilter)) continue;
+                if (!_notePassesHandFilter(cn.hand, _cfg.handFilter)) continue;
                 if (noteToMidi(cn.s, cn.f) === midi) {
                     closest = Math.min(closest, c.t - t);
                 }
@@ -1235,7 +1235,7 @@ function createFactory() {
 
         if (notes) {
             for (const n of notes) {
-                if (!_notePassesHandFilter(n.h, _cfg.handFilter)) continue;
+                if (!_notePassesHandFilter(n.hand, _cfg.handFilter)) continue;
                 if (n.t > t + HIT_TOLERANCE + 0.5) break;
                 if (n.t < t - HIT_TOLERANCE - 0.5) continue;
                 const songMidi = noteToMidi(n.s, n.f);
@@ -1253,7 +1253,7 @@ function createFactory() {
                 if (c.t > t + HIT_TOLERANCE + 0.5) break;
                 if (c.t < t - HIT_TOLERANCE - 0.5) continue;
                 for (const cn of (c.notes || [])) {
-                    if (!_notePassesHandFilter(cn.h, _cfg.handFilter)) continue;
+                    if (!_notePassesHandFilter(cn.hand, _cfg.handFilter)) continue;
                     const songMidi = noteToMidi(cn.s, cn.f);
                     const key = _noteKey(c.t, songMidi);
                     if (songMidi === playedMidi && Math.abs(c.t - t) <= HIT_TOLERANCE && !_hitNoteKeys.has(key)) {
@@ -1285,7 +1285,7 @@ function createFactory() {
             for (const n of notes) {
                 if (n.t > cutoff) break;
                 if (n.t < cutoff - 2) continue;
-                if (!_notePassesHandFilter(n.h, _cfg.handFilter)) continue;
+                if (!_notePassesHandFilter(n.hand, _cfg.handFilter)) continue;
                 const songMidi = noteToMidi(n.s, n.f);
                 const key = _noteKey(n.t, songMidi);
                 if (!_hitNoteKeys.has(key) && !_missedNoteKeys.has(key) && n.t < cutoff) {
@@ -1298,7 +1298,7 @@ function createFactory() {
                 if (c.t > cutoff) break;
                 if (c.t < cutoff - 2) continue;
                 for (const cn of (c.notes || [])) {
-                    if (!_notePassesHandFilter(cn.h, _cfg.handFilter)) continue;
+                    if (!_notePassesHandFilter(cn.hand, _cfg.handFilter)) continue;
                     const songMidi = noteToMidi(cn.s, cn.f);
                     const key = _noteKey(c.t, songMidi);
                     if (!_hitNoteKeys.has(key) && !_missedNoteKeys.has(key) && c.t < cutoff) {
@@ -2088,7 +2088,7 @@ function createFactory() {
                 const dt = n.t - t;
                 if (dt > VISIBLE_SECONDS + 1) break;
                 if (dt < -1 && (n.t + (n.sus || 0)) < t - 0.5) continue;
-                if (!_notePassesHandFilter(n.h, _cfg.handFilter)) continue;
+                if (!_notePassesHandFilter(n.hand, _cfg.handFilter)) continue;
                 allNotes.push({ midi: noteToMidi(n.s, n.f), t: n.t, sus: n.sus || 0, accent: n.ac });
             }
         }
@@ -2098,7 +2098,7 @@ function createFactory() {
                 if (dt > VISIBLE_SECONDS + 1) break;
                 if (dt < -1) continue;
                 for (const cn of (c.notes || [])) {
-                    if (!_notePassesHandFilter(cn.h, _cfg.handFilter)) continue;
+                    if (!_notePassesHandFilter(cn.hand, _cfg.handFilter)) continue;
                     allNotes.push({ midi: noteToMidi(cn.s, cn.f), t: c.t, sus: cn.sus || 0, accent: cn.ac });
                 }
             }
@@ -2203,7 +2203,7 @@ function createFactory() {
         const window_ = 0.06;
         if (notes) {
             for (const n of notes) {
-                if (!_notePassesHandFilter(n.h, _cfg.handFilter)) continue;
+                if (!_notePassesHandFilter(n.hand, _cfg.handFilter)) continue;
                 if (n.t > t + window_) continue;
                 const end = n.t + (n.sus || 0);
                 if (end < t - window_) continue;
@@ -2216,7 +2216,7 @@ function createFactory() {
                 if (c.t > t + window_) continue;
                 if (c.t < t - 1) continue;
                 for (const cn of (c.notes || [])) {
-                    if (!_notePassesHandFilter(cn.h, _cfg.handFilter)) continue;
+                    if (!_notePassesHandFilter(cn.hand, _cfg.handFilter)) continue;
                     const end = c.t + (cn.sus || 0);
                     if (c.t <= t + window_ && end >= t - window_)
                         songActiveSet.add(noteToMidi(cn.s, cn.f));
