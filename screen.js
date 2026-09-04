@@ -900,6 +900,43 @@ function detectRange(notes, chords) {
     return { lo, hi };
 }
 
+function _rangeMismatchSummary(notes, chords, controllerLo, controllerHi, transpose = 0) {
+    if (!Number.isFinite(controllerLo) || !Number.isFinite(controllerHi) ||
+        controllerLo > controllerHi) return null;
+
+    const effectiveLo = controllerLo + (Number.isFinite(transpose) ? transpose : 0);
+    const effectiveHi = controllerHi + (Number.isFinite(transpose) ? transpose : 0);
+    const values = new Set();
+    for (const n of (notes || [])) values.add(noteToMidi(n.s, n.f));
+    for (const c of (chords || [])) {
+        for (const cn of (c.notes || [])) values.add(noteToMidi(cn.s, cn.f));
+    }
+
+    let below = 0, above = 0;
+    for (const midi of values) {
+        if (midi < effectiveLo) below++;
+        else if (midi > effectiveHi) above++;
+    }
+    if (below === 0 && above === 0) return null;
+    return { below, above, effectiveLo, effectiveHi, total: below + above };
+}
+
+// In auto mode the octave shift retargets the near-term lookahead window
+// (the span auto-shift actually guarantees, see _nearTermMidiRange), so a
+// whole-chart scan against the current shift would flag later passages as
+// missed that the shift reaches in time. Scan only that window, matched
+// against the shift computed for it.
+function _nearTermMismatchSummary(notes, chords, controllerLo, controllerHi, transpose, t, lookaheadSec) {
+    const inWindow = (x) => x.t >= t - 0.1 && x.t <= t + lookaheadSec;
+    const near = _nearTermMidiRange(notes || [], chords || [], t, lookaheadSec);
+    const shift = _computeOctaveShift(controllerLo, controllerHi, near ? near.lo : null, near ? near.hi : null);
+    return _rangeMismatchSummary(
+        (notes || []).filter(inWindow),
+        (chords || []).filter(inWindow),
+        controllerLo, controllerHi, transpose + shift
+    );
+}
+
 function _visibleMidiRange(notes, chords, t) {
     let lo = 127, hi = 0;
     const tMax = t + VISIBLE_SECONDS;
@@ -1501,6 +1538,12 @@ function createFactory() {
         gear.dataset.pianoInstance = String(_instanceId);
         gear.type = 'button';
         gear.title = 'Piano settings (MIDI, sound, scoring)';
+        const rangeBadge = document.createElement('span');
+        rangeBadge.className = 'piano-range-badge';
+        rangeBadge.style.cssText = 'display:none;margin-left:3px;color:#f5a623;font-size:12px;';
+        rangeBadge.textContent = '●';
+        rangeBadge.setAttribute('aria-hidden', 'true');
+        gear.appendChild(rangeBadge);
         gear.setAttribute('aria-label', 'Piano settings');
         const glyph = document.createElement('span');
         glyph.setAttribute('aria-hidden', 'true');
@@ -1529,6 +1572,42 @@ function createFactory() {
         if (_settingsGear) {
             _settingsGear.remove();
             _settingsGear = null;
+        }
+    }
+
+    function _updateRangeWarning() {
+        // Mirror the played-note formula at note-on time (rawMidi + transpose
+        // + appliedShift, see above): with "Fit my keyboard" in auto-shift
+        // mode, the octave shift already makes otherwise out-of-range notes
+        // reachable, so it must widen the effective range here too — not
+        // just the manual transpose — or the badge reports notes as missed
+        // that auto-shift already fixed.
+        const summary = (_cfg.octaveFit && _cfg.octaveMode === 'auto')
+            ? _nearTermMismatchSummary(
+                _latestNotes, _latestChords, _cfg.controllerLo, _cfg.controllerHi,
+                _cfg.transpose, _latestTime, OCTAVE_AUTO_LOOKAHEAD_SEC)
+            : _rangeMismatchSummary(
+                _latestNotes, _latestChords, _cfg.controllerLo, _cfg.controllerHi,
+                _cfg.transpose);
+        const message = summary
+            ? `Controller range misses ${summary.below} low and ${summary.above} high chart note${summary.total === 1 ? '' : 's'} (effective MIDI ${summary.effectiveLo}–${summary.effectiveHi}).`
+            : '';
+
+        if (_settingsGear) {
+            const badge = _settingsGear.querySelector('.piano-range-badge');
+            if (badge) {
+                badge.style.display = summary ? 'inline' : 'none';
+                _settingsGear.title = summary
+                    ? message + ' Open piano settings for details.'
+                    : 'Piano settings (MIDI, sound, scoring)';
+            }
+        }
+        if (_settingsPanel) {
+            const warning = _settingsPanel.querySelector('.piano-range-warn');
+            if (warning) {
+                warning.textContent = message;
+                warning.style.display = summary ? '' : 'none';
+            }
         }
     }
 
@@ -1635,7 +1714,8 @@ function createFactory() {
                         border-radius:6px;padding:2px 8px;font-size:10px;color:#ccc;cursor:pointer;">Detect range</button>
                     <span class="piano-octave-status" style="font-size:10px;color:#777;">${_detectStatusText()}</span>
                 </div>
-            </div>`;
+            </div>
+            <div class="piano-range-warn" role="status" style="display:none;color:#f5a623;font-size:10px;margin-top:5px;"></div>`;
 
         if (panelChrome) {
             panelChrome.appendChild(panel);
@@ -1972,6 +2052,7 @@ function createFactory() {
         // the time we get here the chart is confirmed loaded
         // even if the per-frame note window is empty.
         _updateDisplayRange(notes || [], chords || [], t);
+        _updateRangeWarning();
         if (_displayLo === null) {
             ctx.fillStyle = '#040408';
             ctx.fillRect(0, 0, W, H);
@@ -2652,6 +2733,7 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         noteToMidi, midiToNoteName, isBlackKey, _neonRGB, _rgbStr,
         _wafFile, _wafVar, _wafUrl, _midiResolveSaved, _computeOctaveShift, _nearTermMidiRange,
+        _rangeMismatchSummary, _nearTermMismatchSummary,
         _programChangeInstrumentIndex, _pitchBendSemitones,
         _controllerRangeOverlayBounds,
         _gmForToneName, _activeToneNameAt, _keyboardGlowBlur,
