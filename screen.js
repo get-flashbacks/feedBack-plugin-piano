@@ -779,6 +779,21 @@ function buildKeyLookup(layout) {
     return map;
 }
 
+function _controllerRangeOverlayBounds(layout, controllerLo, controllerHi) {
+    if (!Array.isArray(layout) || !layout.length ||
+        !Number.isFinite(controllerLo) || !Number.isFinite(controllerHi) ||
+        controllerLo > controllerHi) return null;
+
+    const visible = layout.filter(k => k.midi >= controllerLo && k.midi <= controllerHi);
+    if (!visible.length) return null;
+    return {
+        x1: Math.min(...visible.map(k => k.x)),
+        x2: Math.max(...visible.map(k => k.x + k.w)),
+        lo: controllerLo,
+        hi: controllerHi,
+    };
+}
+
 function _timeToY(dt, nowLineY, topY) {
     if (dt <= 0) return nowLineY + (-dt / 0.3) * 20;
     const frac = dt / VISIBLE_SECONDS;
@@ -1497,8 +1512,16 @@ function createFactory() {
     }
 
     function _updateRangeWarning() {
+        // Mirror the played-note formula at note-on time (rawMidi + transpose
+        // + appliedShift, see above): with "Fit my keyboard" in auto-shift
+        // mode, the octave shift already makes otherwise out-of-range notes
+        // reachable, so it must widen the effective range here too — not
+        // just the manual transpose — or the badge reports notes as missed
+        // that auto-shift already fixed.
+        const appliedShift = (_cfg.octaveFit && _cfg.octaveMode === 'auto') ? _octaveShift : 0;
         const summary = _rangeMismatchSummary(
-            _latestNotes, _latestChords, _cfg.controllerLo, _cfg.controllerHi, _cfg.transpose
+            _latestNotes, _latestChords, _cfg.controllerLo, _cfg.controllerHi,
+            _cfg.transpose + appliedShift
         );
         const message = summary
             ? `Controller range misses ${summary.below} low and ${summary.above} high chart note${summary.total === 1 ? '' : 's'} (effective MIDI ${summary.effectiveLo}–${summary.effectiveHi}).`
@@ -2039,6 +2062,7 @@ function createFactory() {
         ctx.stroke();
 
         _drawScrollingNotes(ctx, notes, chords, t, layoutMap, noteAreaTop, nowLineY);
+        _drawControllerRangeOverlay(ctx, layout, kbTop);
         _drawKeyboard(ctx, layout, kbTop, kbH, notes, chords, t);
 
         if (_cfg.hitDetection && (_hits + _misses) > 0) {
@@ -2168,6 +2192,25 @@ function createFactory() {
                 ctx.fillText(midiToNoteName(n.midi), barX + barW / 2, y1 + noteH / 2);
             }
         }
+    }
+
+    function _drawControllerRangeOverlay(ctx, layout, kbTop) {
+        const bounds = _controllerRangeOverlayBounds(layout, _cfg.controllerLo, _cfg.controllerHi);
+        if (!bounds) return;
+        const y = Math.max(0, kbTop - 18);
+        const h = 14;
+        ctx.fillStyle = 'rgba(245,166,35,0.22)';
+        ctx.fillRect(bounds.x1, y, bounds.x2 - bounds.x1, h);
+        ctx.fillStyle = '#f5a623';
+        ctx.fillRect(bounds.x1, y, bounds.x2 - bounds.x1, 1);
+        ctx.fillRect(bounds.x1, y + h - 1, bounds.x2 - bounds.x1, 1);
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(
+            `Controller ${midiToNoteName(bounds.lo)}–${midiToNoteName(bounds.hi)}`,
+            (bounds.x1 + bounds.x2) / 2, y + h / 2
+        );
     }
 
     function _drawKeyboard(ctx, layout, kbTop, kbH, notes, chords, t) {
@@ -2623,6 +2666,7 @@ if (typeof module !== 'undefined' && module.exports) {
         noteToMidi, midiToNoteName, isBlackKey, _neonRGB, _rgbStr,
         _wafFile, _wafVar, _wafUrl, _midiResolveSaved, _computeOctaveShift, _nearTermMidiRange,
         _rangeMismatchSummary,
+        _controllerRangeOverlayBounds,
         _gmForToneName, _activeToneNameAt,
         matchesArrangement: createFactory.matchesArrangement,
         _createFactory: createFactory,
