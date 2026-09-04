@@ -179,7 +179,8 @@ function installBrowserHarness(options = {}) {
         cancelAnimationFrame(id) { rafs.delete(id); },
     };
     global.document = doc;
-    global.localStorage = { getItem: () => null, setItem: () => {} };
+    const storage = options.storage || {};
+    global.localStorage = { getItem: (key) => (key in storage ? storage[key] : null), setItem: () => {} };
     global.requestAnimationFrame = global.window.requestAnimationFrame;
     global.cancelAnimationFrame = global.window.cancelAnimationFrame;
     global.performance = { now: () => 0 };
@@ -253,6 +254,29 @@ test('_notePassesHandFilter keeps unlabelled notes visible and filters selected 
     assert.equal(mod._notePassesHandFilter('R', 'L'), false);
     assert.equal(mod._notePassesHandFilter('lh', 'L'), true);
     assert.equal(mod._notePassesHandFilter(null, 'R'), true);
+});
+
+// Regression coverage for the .h vs .hand field-name bug: chart notes are
+// wire-shaped ({ t, s, f, hand }, per feedback core's lib/song.py Note.hand —
+// spelled out because `rh` was already taken by the right-hand finger
+// field), not { h }. A consumer that reads the wrong field silently no-ops
+// hand filtering (every note's hand reads as undefined, which
+// _notePassesHandFilter treats as "unlabelled" and always lets through),
+// and nothing in the pre-fix suite exercised a real consumer against a
+// wire-shaped note, so that regression passed CI silently. This drives
+// _approachAlpha (a real hand-filter-aware consumer) with an active
+// 'R'-only filter against wire-shaped LH/RH notes end to end.
+test('_approachAlpha filters wire-shaped notes/chords by the active hand filter', () => {
+    const rMod = freshPlugin({ storage: { piano_hand_filter: 'R' } });
+    const lhNote = [{ t: 1.0, s: 0, f: 0, hand: 'lh' }]; // midi 0
+    const rhNote = [{ t: 1.0, s: 0, f: 0, hand: 'rh' }]; // midi 0
+    assert.equal(rMod._approachAlpha(0, lhNote, null, 0.9), 0, 'LH note hidden under an R-only filter');
+    assert.ok(rMod._approachAlpha(0, rhNote, null, 0.9) > 0, 'RH note still visible under an R-only filter');
+
+    const lhChord = [{ t: 1.0, notes: [{ s: 0, f: 0, hand: 'lh' }] }];
+    const rhChord = [{ t: 1.0, notes: [{ s: 0, f: 0, hand: 'rh' }] }];
+    assert.equal(rMod._approachAlpha(0, null, lhChord, 0.9), 0, 'LH chord note hidden under an R-only filter');
+    assert.ok(rMod._approachAlpha(0, null, rhChord, 0.9) > 0, 'RH chord note still visible under an R-only filter');
 });
 
 test('_controllerRangeOverlayBounds maps a detected range onto visible keys', () => {
