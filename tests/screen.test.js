@@ -246,7 +246,17 @@ test('_keyboardGlowBlur scales white and black key glow by velocity', () => {
     assert.equal(mod._keyboardGlowBlur(127, false), 24);
     assert.equal(mod._keyboardGlowBlur(1, true), 6 + (1 / 127) * 14);
     assert.equal(mod._keyboardGlowBlur(127, true), 20);
-    assert.equal(mod._keyboardGlowBlur(0, false), mod._keyboardGlowBlur(80, false));
+    assert.equal(mod._keyboardGlowBlur(0, false), mod._keyboardGlowBlur(32, false));
+});
+
+test('_controllerRangeOverlayBounds maps a detected range onto visible keys', () => {
+    const layout = [
+        {midi: 48, x: 0, w: 10}, {midi: 60, x: 100, w: 10}, {midi: 72, x: 200, w: 10}
+    ];
+    assert.deepEqual(mod._controllerRangeOverlayBounds(layout, 55, 70), {
+        x1: 100, x2: 110, lo: 55, hi: 70
+    });
+    assert.equal(mod._controllerRangeOverlayBounds(layout, 0, 20), null);
 });
 
 test('_wafFile/_wafVar/_wafUrl derive consistent names from a GM program number', () => {

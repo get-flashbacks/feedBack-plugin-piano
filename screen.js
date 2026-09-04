@@ -260,7 +260,10 @@ const NEON_RGB = [
 function _neonRGB(midi) { return NEON_RGB[_pmod12(midi)]; }
 
 function _keyboardGlowBlur(velocity, isBlack) {
-    const vel = velocity || 80;
+    // Default velocity for chart-active keys with no physically held MIDI
+    // note. 32 reproduces the pre-velocity-glow fixed blur values (white
+    // 12, black ~10) rather than 80's much wider ~18/~15 (see PR #24 review).
+    const vel = velocity || 32;
     return (isBlack ? 6 : 8) + (vel / 127) * (isBlack ? 14 : 16);
 }
 
@@ -782,6 +785,21 @@ function buildKeyLookup(layout) {
     const map = new Map();
     for (const k of layout) map.set(k.midi, k);
     return map;
+}
+
+function _controllerRangeOverlayBounds(layout, controllerLo, controllerHi) {
+    if (!Array.isArray(layout) || !layout.length ||
+        !Number.isFinite(controllerLo) || !Number.isFinite(controllerHi) ||
+        controllerLo > controllerHi) return null;
+
+    const visible = layout.filter(k => k.midi >= controllerLo && k.midi <= controllerHi);
+    if (!visible.length) return null;
+    return {
+        x1: Math.min(...visible.map(k => k.x)),
+        x2: Math.max(...visible.map(k => k.x + k.w)),
+        lo: controllerLo,
+        hi: controllerHi,
+    };
 }
 
 function _timeToY(dt, nowLineY, topY) {
@@ -1989,6 +2007,7 @@ function createFactory() {
         ctx.stroke();
 
         _drawScrollingNotes(ctx, notes, chords, t, layoutMap, noteAreaTop, nowLineY);
+        _drawControllerRangeOverlay(ctx, layout, kbTop);
         _drawKeyboard(ctx, layout, kbTop, kbH, notes, chords, t);
 
         if (_cfg.hitDetection && (_hits + _misses) > 0) {
@@ -2120,6 +2139,25 @@ function createFactory() {
         }
     }
 
+    function _drawControllerRangeOverlay(ctx, layout, kbTop) {
+        const bounds = _controllerRangeOverlayBounds(layout, _cfg.controllerLo, _cfg.controllerHi);
+        if (!bounds) return;
+        const y = Math.max(0, kbTop - 18);
+        const h = 14;
+        ctx.fillStyle = 'rgba(245,166,35,0.22)';
+        ctx.fillRect(bounds.x1, y, bounds.x2 - bounds.x1, h);
+        ctx.fillStyle = '#f5a623';
+        ctx.fillRect(bounds.x1, y, bounds.x2 - bounds.x1, 1);
+        ctx.fillRect(bounds.x1, y + h - 1, bounds.x2 - bounds.x1, 1);
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(
+            `Controller ${midiToNoteName(bounds.lo)}–${midiToNoteName(bounds.hi)}`,
+            (bounds.x1 + bounds.x2) / 2, y + h / 2
+        );
+    }
+
     function _drawKeyboard(ctx, layout, kbTop, kbH, notes, chords, t) {
         const songActiveSet = new Set();
         const window_ = 0.06;
@@ -2210,7 +2248,7 @@ function createFactory() {
             }
 
             if (pressed) {
-                const vel = playerHeld ? (_heldNotes.get(k.midi) || 80) : 80;
+                const vel = playerHeld ? (_heldNotes.get(k.midi) || 32) : 32;
                 ctx.shadowColor = _rgbStr(fr, fg, fb);
                 ctx.shadowBlur = _keyboardGlowBlur(vel, false);
                 ctx.fillStyle = 'rgba(0,0,0,0)';
@@ -2283,7 +2321,7 @@ function createFactory() {
             }
 
             if (pressed) {
-                const vel = playerHeld ? (_heldNotes.get(k.midi) || 80) : 80;
+                const vel = playerHeld ? (_heldNotes.get(k.midi) || 32) : 32;
                 ctx.shadowColor = _rgbStr(fr, fg, fb);
                 ctx.shadowBlur = _keyboardGlowBlur(vel, true);
                 ctx.fillStyle = 'rgba(0,0,0,0)';
@@ -2574,6 +2612,7 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         noteToMidi, midiToNoteName, isBlackKey, _neonRGB, _rgbStr,
         _wafFile, _wafVar, _wafUrl, _midiResolveSaved, _computeOctaveShift, _nearTermMidiRange,
+        _controllerRangeOverlayBounds,
         _gmForToneName, _activeToneNameAt, _keyboardGlowBlur,
         matchesArrangement: createFactory.matchesArrangement,
         _createFactory: createFactory,
