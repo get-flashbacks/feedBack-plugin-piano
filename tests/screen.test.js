@@ -309,6 +309,29 @@ test('_notePassesHandFilter treats both and invalid filter values as unfiltered'
     }
 });
 
+// Regression coverage for the .h vs .hand field-name bug: chart notes are
+// wire-shaped ({ t, s, f, hand }, per feedback core's lib/song.py Note.hand —
+// spelled out because `rh` was already taken by the right-hand finger
+// field), not { h }. A consumer that reads the wrong field silently no-ops
+// hand filtering (every note's hand reads as undefined, which
+// _notePassesHandFilter treats as "unlabelled" and always lets through),
+// and nothing in the pre-fix suite exercised a real consumer against a
+// wire-shaped note, so that regression passed CI silently. This drives
+// _approachAlpha (a real hand-filter-aware consumer) with an active
+// 'R'-only filter against wire-shaped LH/RH notes end to end.
+test('_approachAlpha filters wire-shaped notes/chords by the active hand filter', () => {
+    const rMod = freshPlugin({ storage: { piano_hand_filter: 'R' } });
+    const lhNote = [{ t: 1.0, s: 0, f: 0, hand: 'lh' }]; // midi 0
+    const rhNote = [{ t: 1.0, s: 0, f: 0, hand: 'rh' }]; // midi 0
+    assert.equal(rMod._approachAlpha(0, lhNote, null, 0.9), 0, 'LH note hidden under an R-only filter');
+    assert.ok(rMod._approachAlpha(0, rhNote, null, 0.9) > 0, 'RH note still visible under an R-only filter');
+
+    const lhChord = [{ t: 1.0, notes: [{ s: 0, f: 0, hand: 'lh' }] }];
+    const rhChord = [{ t: 1.0, notes: [{ s: 0, f: 0, hand: 'rh' }] }];
+    assert.equal(rMod._approachAlpha(0, null, lhChord, 0.9), 0, 'LH chord note hidden under an R-only filter');
+    assert.ok(rMod._approachAlpha(0, null, rhChord, 0.9) > 0, 'RH chord note still visible under an R-only filter');
+});
+
 test('_controllerRangeOverlayBounds maps a detected range onto visible keys', () => {
     const layout = [
         {midi: 48, x: 0, w: 10}, {midi: 60, x: 100, w: 10}, {midi: 72, x: 200, w: 10}
@@ -624,11 +647,11 @@ test('renderer filters labelled single and chord notes while retaining unlabelle
         currentTime: 0,
         beats: [],
         notes: [
-            { t: 0.5, s: 2, f: 12, sus: 1, h: 'L' }, // C4, filtered initially
+            { t: 0.5, s: 2, f: 12, sus: 1, hand: 'L' }, // C4, filtered initially
             { t: 0.5, s: 2, f: 19, sus: 1 },          // G4, legacy/unlabelled
         ],
         chords: [
-            { t: 0.5, notes: [{ s: 2, f: 16, sus: 1, h: 'left' }] }, // E4
+            { t: 0.5, notes: [{ s: 2, f: 16, sus: 1, hand: 'left' }] }, // E4
         ],
     };
 
@@ -664,11 +687,11 @@ test('hit detection scores only the selected hand and still accepts unlabelled n
         currentTime: 1,
         beats: [],
         notes: [
-            { t: 1, s: 2, f: 12, h: 'L' }, // C4
+            { t: 1, s: 2, f: 12, hand: 'L' }, // C4
             { t: 1, s: 2, f: 19 },         // G4, legacy/unlabelled
         ],
         chords: [
-            { t: 1, notes: [{ s: 2, f: 16, h: 'R' }] }, // E4
+            { t: 1, notes: [{ s: 2, f: 16, hand: 'R' }] }, // E4
         ],
     };
     const latestHud = () => ctx.fillTextCalls

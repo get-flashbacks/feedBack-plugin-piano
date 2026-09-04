@@ -2652,7 +2652,7 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         noteToMidi, midiToNoteName, isBlackKey, _neonRGB, _rgbStr,
         _wafFile, _wafVar, _wafUrl, _midiResolveSaved, _computeOctaveShift, _nearTermMidiRange,
-        _normalizeHand, _notePassesHandFilter,
+        _normalizeHand, _notePassesHandFilter, _approachAlpha,
         _controllerRangeOverlayBounds,
         _gmForToneName, _activeToneNameAt,
         matchesArrangement: createFactory.matchesArrangement,
