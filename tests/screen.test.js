@@ -272,6 +272,8 @@ test('_nearTermMismatchSummary reports a window wider than the controller span',
     assert.deepEqual(mod._nearTermMismatchSummary(notes, [], 36, 60, 0, 0, 0.5), {
         below: 0, above: 1, effectiveLo: 48, effectiveHi: 72, total: 1
     });
+});
+
 test('_keyboardGlowBlur scales white and black key glow by velocity', () => {
     assert.equal(mod._keyboardGlowBlur(1, false), 8 + (1 / 127) * 16);
     assert.equal(mod._keyboardGlowBlur(127, false), 24);
