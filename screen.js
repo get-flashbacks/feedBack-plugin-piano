@@ -795,6 +795,21 @@ function buildKeyLookup(layout) {
     return map;
 }
 
+function _controllerRangeOverlayBounds(layout, controllerLo, controllerHi) {
+    if (!Array.isArray(layout) || !layout.length ||
+        !Number.isFinite(controllerLo) || !Number.isFinite(controllerHi) ||
+        controllerLo > controllerHi) return null;
+
+    const visible = layout.filter(k => k.midi >= controllerLo && k.midi <= controllerHi);
+    if (!visible.length) return null;
+    return {
+        x1: Math.min(...visible.map(k => k.x)),
+        x2: Math.max(...visible.map(k => k.x + k.w)),
+        lo: controllerLo,
+        hi: controllerHi,
+    };
+}
+
 function _timeToY(dt, nowLineY, topY) {
     if (dt <= 0) return nowLineY + (-dt / 0.3) * 20;
     const frac = dt / VISIBLE_SECONDS;
@@ -1270,6 +1285,7 @@ function createFactory() {
             for (const n of notes) {
                 if (n.t > cutoff) break;
                 if (n.t < cutoff - 2) continue;
+                if (!_notePassesHandFilter(n.h, _cfg.handFilter)) continue;
                 const songMidi = noteToMidi(n.s, n.f);
                 const key = _noteKey(n.t, songMidi);
                 if (!_hitNoteKeys.has(key) && !_missedNoteKeys.has(key) && n.t < cutoff) {
@@ -1282,6 +1298,7 @@ function createFactory() {
                 if (c.t > cutoff) break;
                 if (c.t < cutoff - 2) continue;
                 for (const cn of (c.notes || [])) {
+                    if (!_notePassesHandFilter(cn.h, _cfg.handFilter)) continue;
                     const songMidi = noteToMidi(cn.s, cn.f);
                     const key = _noteKey(c.t, songMidi);
                     if (!_hitNoteKeys.has(key) && !_missedNoteKeys.has(key) && c.t < cutoff) {
@@ -2028,6 +2045,7 @@ function createFactory() {
         ctx.stroke();
 
         _drawScrollingNotes(ctx, notes, chords, t, layoutMap, noteAreaTop, nowLineY);
+        _drawControllerRangeOverlay(ctx, layout, kbTop);
         _drawKeyboard(ctx, layout, kbTop, kbH, notes, chords, t);
 
         if (_cfg.hitDetection && (_hits + _misses) > 0) {
@@ -2159,6 +2177,25 @@ function createFactory() {
                 ctx.fillText(midiToNoteName(n.midi), barX + barW / 2, y1 + noteH / 2);
             }
         }
+    }
+
+    function _drawControllerRangeOverlay(ctx, layout, kbTop) {
+        const bounds = _controllerRangeOverlayBounds(layout, _cfg.controllerLo, _cfg.controllerHi);
+        if (!bounds) return;
+        const y = Math.max(0, kbTop - 18);
+        const h = 14;
+        ctx.fillStyle = 'rgba(245,166,35,0.22)';
+        ctx.fillRect(bounds.x1, y, bounds.x2 - bounds.x1, h);
+        ctx.fillStyle = '#f5a623';
+        ctx.fillRect(bounds.x1, y, bounds.x2 - bounds.x1, 1);
+        ctx.fillRect(bounds.x1, y + h - 1, bounds.x2 - bounds.x1, 1);
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(
+            `Controller ${midiToNoteName(bounds.lo)}–${midiToNoteName(bounds.hi)}`,
+            (bounds.x1 + bounds.x2) / 2, y + h / 2
+        );
     }
 
     function _drawKeyboard(ctx, layout, kbTop, kbH, notes, chords, t) {
@@ -2616,6 +2653,7 @@ if (typeof module !== 'undefined' && module.exports) {
         noteToMidi, midiToNoteName, isBlackKey, _neonRGB, _rgbStr,
         _wafFile, _wafVar, _wafUrl, _midiResolveSaved, _computeOctaveShift, _nearTermMidiRange,
         _normalizeHand, _notePassesHandFilter,
+        _controllerRangeOverlayBounds,
         _gmForToneName, _activeToneNameAt,
         matchesArrangement: createFactory.matchesArrangement,
         _createFactory: createFactory,
