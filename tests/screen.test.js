@@ -332,6 +332,18 @@ test('_approachAlpha filters wire-shaped notes/chords by the active hand filter'
     assert.ok(rMod._approachAlpha(0, null, rhChord, 0.9) > 0, 'RH chord note still visible under an R-only filter');
 });
 
+test('_programChangeInstrumentIndex selects curated GM instruments and safely falls back', () => {
+    assert.equal(mod._programChangeInstrumentIndex(0), 0);
+    assert.equal(mod._programChangeInstrumentIndex(4), 1);
+    assert.equal(mod._programChangeInstrumentIndex(127), 7);
+});
+
+test('_pitchBendSemitones maps 14-bit MIDI bend values around center', () => {
+    assert.equal(mod._pitchBendSemitones(0, 64), 0);
+    assert.ok(Math.abs(mod._pitchBendSemitones(127, 127) - 2) < 0.001);
+    assert.ok(mod._pitchBendSemitones(0, 0) < -1.99);
+});
+
 test('_controllerRangeOverlayBounds maps a detected range onto visible keys', () => {
     const layout = [
         {midi: 48, x: 0, w: 10}, {midi: 60, x: 100, w: 10}, {midi: 72, x: 200, w: 10}
