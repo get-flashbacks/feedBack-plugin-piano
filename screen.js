@@ -197,6 +197,40 @@ function _notePassesHandFilter(hand, filter) {
     return selected === 'both' || !normalized || normalized === selected;
 }
 
+// Returns the currently-sustaining named chords as [{ name, midi }], where
+// midi is the leftmost hand-filtered note in the chord (used to position the
+// floating label). `templates` is the chart's chord-template table, indexed
+// by each chord's `tmpl`; chords without a resolvable name, or with no note
+// passing the hand filter, are skipped. Pure so it's testable without a
+// canvas (issue #19).
+function _activeChordLabels(chords, templates, t, handFilter) {
+    if (!chords || !templates) return [];
+    const out = [];
+    for (const c of chords) {
+        const dt = c.t - t;
+        if (dt > VISIBLE_SECONDS + 1) break;
+        if (dt < -1) continue;
+
+        const tmpl = c.tmpl != null ? templates[c.tmpl] : null;
+        const name = tmpl && tmpl.name ? tmpl.name : null;
+        if (!name) continue;
+
+        let isActive = false;
+        let leftmostMidi = Infinity;
+        for (const cn of (c.notes || [])) {
+            if (!_notePassesHandFilter(cn.hand, handFilter)) continue;
+            const dtEnd = (c.t + (cn.sus || 0)) - t;
+            if (dt <= 0.05 && dtEnd >= -0.05) isActive = true;
+            const m = noteToMidi(cn.s, cn.f);
+            if (m < leftmostMidi) leftmostMidi = m;
+        }
+        if (!isActive || leftmostMidi === Infinity) continue;
+
+        out.push({ name, midi: leftmostMidi });
+    }
+    return out;
+}
+
 function _programChangeInstrumentIndex(program) {
     const p = Number(program);
     if (!Number.isFinite(p)) return 0;
@@ -2058,7 +2092,7 @@ function createFactory() {
             return;
         }
 
-        _draw(_latestBundle.notes, _latestBundle.chords, _latestBundle.currentTime, _latestBundle.beats);
+        _draw(_latestBundle.notes, _latestBundle.chords, _latestBundle.currentTime, _latestBundle.beats, _latestBundle.templates);
         _maybeFollowToneChange(_latestBundle);
     }
 
@@ -2122,7 +2156,7 @@ function createFactory() {
 
     // ── Drawing ──
 
-    function _draw(notes, chords, t, beats) {
+    function _draw(notes, chords, t, beats, templates) {
         if (!_pianoCanvas || !_pianoCtx) return;
 
         _latestNotes = notes;
@@ -2220,7 +2254,7 @@ function createFactory() {
         ctx.lineTo(W - padR, nowLineY);
         ctx.stroke();
 
-        _drawScrollingNotes(ctx, notes, chords, t, layoutMap, noteAreaTop, nowLineY);
+        _drawScrollingNotes(ctx, notes, chords, t, layoutMap, noteAreaTop, nowLineY, templates);
         _drawControllerRangeOverlay(ctx, layout, kbTop);
         _drawKeyboard(ctx, layout, kbTop, kbH, notes, chords, t);
 
@@ -2256,7 +2290,7 @@ function createFactory() {
         }
     }
 
-    function _drawScrollingNotes(ctx, notes, chords, t, layoutMap, topY, nowLineY) {
+    function _drawScrollingNotes(ctx, notes, chords, t, layoutMap, topY, nowLineY, templates) {
         const allNotes = [];
 
         if (notes) {
@@ -2351,6 +2385,39 @@ function createFactory() {
                 ctx.fillText(midiToNoteName(n.midi), barX + barW / 2 + 0.5, y1 + noteH / 2 + 0.5);
                 ctx.fillStyle = '#fff';
                 ctx.fillText(midiToNoteName(n.midi), barX + barW / 2, y1 + noteH / 2);
+            }
+        }
+
+        // Chord-name floating labels — drawn after all bars so they sit on
+        // top, above the leftmost (hand-filtered) note of each currently
+        // sustaining named chord (issue #19).
+        if (_cfg.showNoteNames && templates) {
+            const activeChordLabels = _activeChordLabels(chords, templates, t, _cfg.handFilter);
+            if (activeChordLabels.length) {
+                const labelFontSize = 11;
+                const labelPadX = 5;
+                const labelPadY = 3;
+                const labelH = labelFontSize + labelPadY * 2;
+                const labelY = nowLineY - 8 - labelH;
+
+                ctx.font = `bold ${labelFontSize}px sans-serif`;
+                for (const label of activeChordLabels) {
+                    const key = layoutMap.get(label.midi);
+                    if (!key) continue;
+                    const x = key.x + key.w / 2;
+                    const tw = ctx.measureText(label.name).width;
+                    const lx = x - tw / 2 - labelPadX;
+                    const lw = tw + labelPadX * 2;
+
+                    ctx.fillStyle = 'rgba(10,10,28,0.82)';
+                    _roundRect(ctx, lx, labelY, lw, labelH, 4);
+                    ctx.fill();
+
+                    ctx.fillStyle = '#fff';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(label.name, x, labelY + labelH / 2);
+                }
             }
         }
     }
@@ -2835,7 +2902,7 @@ if (typeof module !== 'undefined' && module.exports) {
         _programChangeInstrumentIndex, _pitchBendSemitones,
         _controllerRangeOverlayBounds,
         _gmForToneName, _activeToneNameAt, _keyboardGlowBlur,
-        _lerpDisplayRange,
+        _lerpDisplayRange, _activeChordLabels,
         matchesArrangement: createFactory.matchesArrangement,
         _createFactory: createFactory,
     };
