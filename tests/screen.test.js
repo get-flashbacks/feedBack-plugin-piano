@@ -515,6 +515,38 @@ test('_computeOctaveShift minimizes overflow when no shift fits fully', () => {
     }
 });
 
+test('_lerpDisplayRange holds still at zero elapsed time', () => {
+    const eased = mod._lerpDisplayRange(40, 80, 20, 100, 0, 0.12);
+    assert.deepEqual(eased, { lo: 40, hi: 80 });
+});
+
+test('_lerpDisplayRange moves partway toward the target, not instantly', () => {
+    const eased = mod._lerpDisplayRange(40, 80, 20, 100, 0.05, 0.12);
+    assert.ok(eased.lo < 40 && eased.lo > 20, 'lo should ease downward without snapping past the target');
+    assert.ok(eased.hi > 80 && eased.hi < 100, 'hi should ease upward without snapping past the target');
+});
+
+test('_lerpDisplayRange converges close to the target after many time-constants', () => {
+    const eased = mod._lerpDisplayRange(40, 80, 20, 100, 10 * 0.12, 0.12);
+    assert.ok(Math.abs(eased.lo - 20) < 0.01, 'lo should have nearly reached the target');
+    assert.ok(Math.abs(eased.hi - 100) < 0.01, 'hi should have nearly reached the target');
+});
+
+test('_lerpDisplayRange is frame-rate independent: two half-steps roughly match one full step', () => {
+    const dt = 0.06, tau = 0.12;
+    const oneStep = mod._lerpDisplayRange(40, 80, 20, 100, dt * 2, tau);
+    let two = { lo: 40, hi: 80 };
+    two = mod._lerpDisplayRange(two.lo, two.hi, 20, 100, dt, tau);
+    two = mod._lerpDisplayRange(two.lo, two.hi, 20, 100, dt, tau);
+    assert.ok(Math.abs(oneStep.lo - two.lo) < 0.5, `expected ~${oneStep.lo}, got ${two.lo}`);
+    assert.ok(Math.abs(oneStep.hi - two.hi) < 0.5, `expected ~${oneStep.hi}, got ${two.hi}`);
+});
+
+test('_lerpDisplayRange clamps a negative elapsed time to zero movement', () => {
+    const eased = mod._lerpDisplayRange(40, 80, 20, 100, -1, 0.12);
+    assert.deepEqual(eased, { lo: 40, hi: 80 });
+});
+
 test('_nearTermMidiRange only considers notes within the lookahead window', () => {
     const notes = [
         { t: 0.0, s: 0, f: 0 },   // midi 0, before the window start (t=1 - 0.1 slack = 0.9) -> excluded
