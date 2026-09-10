@@ -212,8 +212,17 @@ function installBrowserHarness(options = {}) {
     };
     global.requestAnimationFrame = global.window.requestAnimationFrame;
     global.cancelAnimationFrame = global.window.cancelAnimationFrame;
-    global.performance = { now: () => 0 };
-    return { doc, windowListeners, rafs, storage };
+    // Pinned at 0 by default (existing timing-sensitive tests, e.g.
+    // wrong-note-flash expiry, rely on a motionless clock); a test that
+    // needs real elapsed time can advance it via the returned `clock`
+    // object (see advanceClock below) without affecting any other test.
+    const clock = { now: 0 };
+    global.performance = { now: () => clock.now };
+    return { doc, windowListeners, rafs, storage, clock };
+}
+
+function advanceClock(harness, ms) {
+    harness.clock.now += ms;
 }
 
 function freshPlugin(options = {}) {
@@ -902,6 +911,77 @@ test('renderer clamps a chord-name label so it stays within the drawable canvas 
         `label left edge (${call.x - lw / 2}) should not run past the canvas's left padding (${padL})`);
     assert.ok(call.x + lw / 2 <= canvasW - padR + 0.01,
         `label right edge (${call.x + lw / 2}) should not run past the canvas's right padding (${canvasW - padR})`);
+
+    renderer.destroy();
+});
+
+test('renderer converges the eased display range to the octave-aligned target after an upward retarget', () => {
+    // Regression test for the range-ease freeze: this drives the real
+    // per-instance _updateDisplayRange orchestration (guard + target +
+    // ease) through the full render path with a real advancing clock,
+    // rather than only exercising the pure _lerpDisplayRange math. Uses
+    // advanceClock (see installBrowserHarness) instead of the harness's
+    // default pinned-at-0 performance.now(), which other tests rely on.
+    //
+    // Numbers were chosen empirically (not just derived) by running this
+    // exact scenario against a deliberately-reintroduced copy of the old
+    // buggy guard (comparing raw against the in-flight _displayLo/_displayHi
+    // instead of the persisted _targetLo/_targetHi): it reliably froze the
+    // display at [19,66] — a "G" key — well short of the true [24,71]
+    // target, confirming this scenario actually exercises the bug rather
+    // than coincidentally reaching the target too fast to observe it.
+    //
+    // "Show note names" is turned off so per-note/chord labels (which reuse
+    // the same "C4"-style text as the keyboard's own key labels) can't be
+    // confused with the keyboard's unconditional per-white-key labels below.
+    const { harness, renderer } = initRendererWithHarness({
+        storage: { piano_auto_tone: 'false', piano_note_names: 'false' },
+    });
+    const overlay = harness.doc.elementsById.player.children
+        .find(el => el.className === 'piano-highway-canvas');
+    const ctx = overlay.getContext('2d');
+
+    // First draw: a low note (midi 24) snaps the initial display to [0,47].
+    renderer.draw({
+        isReady: true,
+        currentTime: 0,
+        beats: [],
+        notes: [{ t: 0, s: 1, f: 0, sus: 0.2 }], // s=1,f=0 -> midi 24
+        chords: [],
+    });
+
+    // Then an upward retarget to [24,71], driven by notes at midi 30 and 60
+    // staying visible across many frames with the clock actually advancing.
+    // Each frame's delta is internally clamped to 0.1s, so ~20 steps clears
+    // RANGE_LERP_TAU_SEC (0.12s) many times over and should fully converge.
+    const highBundle = {
+        isReady: true,
+        currentTime: 10,
+        beats: [],
+        notes: [
+            { t: 10, s: 1, f: 6, sus: 0.2 },  // s=1,f=6 -> midi 30
+            { t: 10, s: 2, f: 12, sus: 0.2 }, // s=2,f=12 -> midi 60
+        ],
+        chords: [],
+    };
+    let lastLabel = null;
+    for (let i = 0; i < 20; i++) {
+        advanceClock(harness, 150);
+        ctx.fillTextCalls.length = 0;
+        renderer.draw(highBundle);
+        // _drawKeyboard draws an unconditional label for every white key,
+        // in ascending-MIDI order matching the layout array, so the first
+        // one recorded each frame is the leftmost (lowest-MIDI) visible
+        // white key — i.e. _displayLo, or the next white key up from it.
+        const first = ctx.fillTextCalls.find(call => /^[A-G]$|^C-?\d+$/.test(call.text));
+        lastLabel = first && first.text;
+    }
+
+    // _targetLo (24) is always a multiple of 12, i.e. a C, so full
+    // convergence means the leftmost visible key is exactly "C1" (24).
+    // The buggy guard instead settles on "G" (19) for this exact scenario.
+    assert.equal(lastLabel, 'C1',
+        'display range should fully converge to the [24,71] target, not freeze a few semitones short of it');
 
     renderer.destroy();
 });
