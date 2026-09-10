@@ -569,66 +569,90 @@ test('_nearTermMidiRange considers chord notes too', () => {
     assert.deepEqual(range, { lo: 24, hi: 96 });
 });
 
-test('_activeChordLabels returns nothing without a templates table', () => {
-    const chords = [{ t: 1.0, tmpl: 0, notes: [{ s: 2, f: 0, sus: 1 }] }];
+// Fixtures below use the real host wire shapes: a chord is keyed by `id`
+// (not `tmpl`), and the template table is `chordTemplates` (not `templates`)
+// — see get-flashbacks/feedback lib/song.py chord_to_wire / static/highway.js
+// _makeBundle. An earlier version of these tests fabricated a `templates`/
+// `tmpl` contract the host never produces, which let the feature ship
+// broken (the label block was always skipped in production) while every
+// test stayed green.
+
+test('_activeChordLabels returns nothing without a chordTemplates table', () => {
+    const chords = [{ t: 1.0, id: 0, notes: [{ s: 2, f: 0, sus: 1 }] }];
     assert.deepEqual(mod._activeChordLabels(chords, null, 1.0, 'both'), []);
     assert.deepEqual(mod._activeChordLabels(null, [{ name: 'Cmaj7' }], 1.0, 'both'), []);
 });
 
 test('_activeChordLabels only reports chords currently sustaining, not upcoming or past ones', () => {
-    const templates = [{ name: 'Cmaj7' }];
+    const chordTemplates = [{ name: 'Cmaj7' }];
     const chords = [
-        { t: 5.0, tmpl: 0, notes: [{ s: 2, f: 0, sus: 1 }] }, // far in the future
-        { t: 1.0, tmpl: 0, notes: [{ s: 2, f: 0, sus: 1 }] },  // sustaining now
-        { t: -5.0, tmpl: 0, notes: [{ s: 2, f: 0, sus: 1 }] }, // long past
+        { t: 5.0, id: 0, notes: [{ s: 2, f: 0, sus: 1 }] }, // far in the future
+        { t: 1.0, id: 0, notes: [{ s: 2, f: 0, sus: 1 }] },  // sustaining now
+        { t: -5.0, id: 0, notes: [{ s: 2, f: 0, sus: 1 }] }, // long past
     ];
-    const labels = mod._activeChordLabels(chords, templates, 1.0, 'both');
+    const labels = mod._activeChordLabels(chords, chordTemplates, 1.0, 'both');
     assert.equal(labels.length, 1);
     assert.equal(labels[0].name, 'Cmaj7');
     assert.equal(labels[0].midi, 48); // s=2,f=0 -> 48
 });
 
-test('_activeChordLabels skips chords whose template index has no name', () => {
-    const templates = [{}, { name: 'G7' }];
+test('_activeChordLabels skips chords whose template id has no name', () => {
+    const chordTemplates = [{}, { name: 'G7' }];
     const chords = [
-        { t: 1.0, tmpl: 0, notes: [{ s: 2, f: 0, sus: 1 }] }, // template with no name
-        { t: 1.0, tmpl: 5, notes: [{ s: 2, f: 0, sus: 1 }] }, // out-of-range template index
-        { t: 1.0, notes: [{ s: 2, f: 0, sus: 1 }] },          // no tmpl at all
+        { t: 1.0, id: 0, notes: [{ s: 2, f: 0, sus: 1 }] }, // template with no name
+        { t: 1.0, id: 5, notes: [{ s: 2, f: 0, sus: 1 }] }, // out-of-range template id
+        { t: 1.0, notes: [{ s: 2, f: 0, sus: 1 }] },          // no id at all
     ];
-    assert.deepEqual(mod._activeChordLabels(chords, templates, 1.0, 'both'), []);
+    assert.deepEqual(mod._activeChordLabels(chords, chordTemplates, 1.0, 'both'), []);
 });
 
 test('_activeChordLabels reports the leftmost (lowest-MIDI) note of the chord', () => {
-    const templates = [{ name: 'Cmaj' }];
-    const chords = [{ t: 1.0, tmpl: 0, notes: [
+    const chordTemplates = [{ name: 'Cmaj' }];
+    const chords = [{ t: 1.0, id: 0, notes: [
         { s: 3, f: 0, sus: 1 },  // midi 72, higher
         { s: 2, f: 0, sus: 1 },  // midi 48, lower — should win
         { s: 2, f: 4, sus: 1 },  // midi 52
     ] }];
-    const labels = mod._activeChordLabels(chords, templates, 1.0, 'both');
+    const labels = mod._activeChordLabels(chords, chordTemplates, 1.0, 'both');
     assert.equal(labels.length, 1);
     assert.equal(labels[0].midi, 48);
 });
 
+test('_activeChordLabels ignores a note that has already ended its own sustain', () => {
+    // Regression test: the leftmost note used to be picked across every note
+    // in the chord regardless of whether that note itself had already
+    // stopped sounding, so a short bass note under longer upper notes left
+    // the label stuck over an already-released key for the rest of the
+    // chord. It should track only notes that are still actually sounding.
+    const chordTemplates = [{ name: 'Cmaj' }];
+    const chords = [{ t: 1.0, id: 0, notes: [
+        { s: 2, f: 0, sus: 0.2 },  // midi 48, bass note — released by t=1.5
+        { s: 3, f: 0, sus: 2 },    // midi 72, still sounding at t=1.5
+    ] }];
+    const labels = mod._activeChordLabels(chords, chordTemplates, 1.5, 'both');
+    assert.equal(labels.length, 1);
+    assert.equal(labels[0].midi, 72, 'should track the still-sounding note, not the released bass note');
+});
+
 test('_activeChordLabels respects the hand filter, both for activity and the leftmost note', () => {
-    const templates = [{ name: 'Cmaj' }];
-    const chords = [{ t: 1.0, tmpl: 0, notes: [
+    const chordTemplates = [{ name: 'Cmaj' }];
+    const chords = [{ t: 1.0, id: 0, notes: [
         { s: 2, f: 0, sus: 1, hand: 'L' },  // midi 48
         { s: 3, f: 0, sus: 1, hand: 'R' },  // midi 72
     ] }];
 
-    const rightOnly = mod._activeChordLabels(chords, templates, 1.0, 'R');
+    const rightOnly = mod._activeChordLabels(chords, chordTemplates, 1.0, 'R');
     assert.equal(rightOnly.length, 1);
     assert.equal(rightOnly[0].midi, 72, 'right-hand filter should report the R note, not the filtered-out L note');
 
-    const leftOnly = mod._activeChordLabels(chords, templates, 1.0, 'L');
+    const leftOnly = mod._activeChordLabels(chords, chordTemplates, 1.0, 'L');
     assert.equal(leftOnly.length, 1);
     assert.equal(leftOnly[0].midi, 48, 'left-hand filter should report the L note, not the filtered-out R note');
 
     // Once neither of a chord's notes passes the filter, the chord itself is
     // not reported as active at all — not even with a bogus placeholder midi.
-    const rightHandChord = [{ t: 1.0, tmpl: 0, notes: [{ s: 2, f: 0, sus: 1, hand: 'R' }] }];
-    assert.deepEqual(mod._activeChordLabels(rightHandChord, templates, 1.0, 'L'), []);
+    const rightHandChord = [{ t: 1.0, id: 0, notes: [{ s: 2, f: 0, sus: 1, hand: 'R' }] }];
+    assert.deepEqual(mod._activeChordLabels(rightHandChord, chordTemplates, 1.0, 'L'), []);
 });
 
 test('matchesArrangement rejects a falsy songInfo', () => {
@@ -831,14 +855,53 @@ test('renderer draws a floating chord-name label for a sustaining named chord', 
         beats: [],
         notes: [],
         chords: [
-            { t: 0.5, tmpl: 0, notes: [{ s: 2, f: 0, sus: 1 }] }, // C4, sustaining now
+            { t: 0.5, id: 0, notes: [{ s: 2, f: 0, sus: 1 }] }, // C4, sustaining now
         ],
-        templates: [{ name: 'Cmaj7' }],
+        chordTemplates: [{ name: 'Cmaj7' }],
     };
 
     renderer.draw(bundle);
     const labels = ctx.fillTextCalls.map(call => call.text);
     assert.ok(labels.includes('Cmaj7'), 'chord name should be drawn while the chord sustains');
+
+    renderer.destroy();
+});
+
+test('renderer clamps a chord-name label so it stays within the drawable canvas bounds', () => {
+    const { harness, renderer } = initRendererWithHarness({
+        storage: { piano_auto_tone: 'false' },
+    });
+    const overlay = harness.doc.elementsById.player.children
+        .find(el => el.className === 'piano-highway-canvas');
+    const ctx = overlay.getContext('2d');
+    // Deliberately far wider than the 640px test canvas so the label is
+    // guaranteed to overflow one edge without clamping, regardless of
+    // exactly where its note lands in the keyboard layout.
+    const longName = 'X'.repeat(60);
+    const bundle = {
+        isReady: true,
+        currentTime: 0.5,
+        beats: [],
+        notes: [],
+        chords: [
+            { t: 0.5, id: 0, notes: [{ s: 2, f: 0, sus: 1 }] }, // C4
+        ],
+        chordTemplates: [{ name: longName }],
+    };
+
+    renderer.draw(bundle);
+    const call = ctx.fillTextCalls.find(c => c.text === longName);
+    assert.ok(call, 'chord label should be drawn');
+
+    const tw = longName.length * 6; // matches this harness's measureText mock
+    const lw = tw + 5 * 2; // labelPadX = 5 on each side
+    const canvasW = overlay.clientWidth;
+    const padL = 10, padR = 10;
+
+    assert.ok(call.x - lw / 2 >= padL - 0.01,
+        `label left edge (${call.x - lw / 2}) should not run past the canvas's left padding (${padL})`);
+    assert.ok(call.x + lw / 2 <= canvasW - padR + 0.01,
+        `label right edge (${call.x + lw / 2}) should not run past the canvas's right padding (${canvasW - padR})`);
 
     renderer.destroy();
 });
@@ -856,9 +919,9 @@ test('renderer skips chord-name labels once "Show note names" is turned off', ()
         beats: [],
         notes: [],
         chords: [
-            { t: 0.5, tmpl: 0, notes: [{ s: 2, f: 0, sus: 1 }] },
+            { t: 0.5, id: 0, notes: [{ s: 2, f: 0, sus: 1 }] },
         ],
-        templates: [{ name: 'Cmaj7' }],
+        chordTemplates: [{ name: 'Cmaj7' }],
     };
 
     renderer.draw(bundle);

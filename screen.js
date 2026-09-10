@@ -198,20 +198,24 @@ function _notePassesHandFilter(hand, filter) {
 }
 
 // Returns the currently-sustaining named chords as [{ name, midi }], where
-// midi is the leftmost hand-filtered note in the chord (used to position the
-// floating label). `templates` is the chart's chord-template table, indexed
-// by each chord's `tmpl`; chords without a resolvable name, or with no note
-// passing the hand filter, are skipped. Pure so it's testable without a
-// canvas (issue #19).
-function _activeChordLabels(chords, templates, t, handFilter) {
-    if (!chords || !templates) return [];
+// midi is the leftmost hand-filtered *and currently-sounding* note in the
+// chord (used to position the floating label — a note that already ended
+// its own sustain doesn't count, so the label tracks whatever's actually
+// still audible rather than sticking over an already-released key).
+// `chordTemplates` is the host bundle's chord-template table (its wire key
+// is `chordTemplates`, not `templates`), indexed by each chord's `id` (its
+// wire key — not `tmpl`, which this chart format doesn't have). Chords
+// without a resolvable name, or with no note passing the hand filter, are
+// skipped. Pure so it's testable without a canvas (issue #19).
+function _activeChordLabels(chords, chordTemplates, t, handFilter) {
+    if (!chords || !chordTemplates) return [];
     const out = [];
     for (const c of chords) {
         const dt = c.t - t;
         if (dt > VISIBLE_SECONDS + 1) break;
         if (dt < -1) continue;
 
-        const tmpl = c.tmpl != null ? templates[c.tmpl] : null;
+        const tmpl = c.id != null ? chordTemplates[c.id] : null;
         const name = tmpl && tmpl.name ? tmpl.name : null;
         if (!name) continue;
 
@@ -220,7 +224,8 @@ function _activeChordLabels(chords, templates, t, handFilter) {
         for (const cn of (c.notes || [])) {
             if (!_notePassesHandFilter(cn.hand, handFilter)) continue;
             const dtEnd = (c.t + (cn.sus || 0)) - t;
-            if (dt <= 0.05 && dtEnd >= -0.05) isActive = true;
+            if (dt > 0.05 || dtEnd < -0.05) continue; // this note isn't sounding right now
+            isActive = true;
             const m = noteToMidi(cn.s, cn.f);
             if (m < leftmostMidi) leftmostMidi = m;
         }
@@ -1166,9 +1171,11 @@ function createFactory() {
 
     // Display range cache. _displayLo/_displayHi are the rounded integer
     // bounds the renderer uses; _displayLoF/_displayHiF are the underlying
-    // float accumulators that ease toward the target range (issue #17).
+    // float accumulators that ease toward _targetLo/_targetHi, the
+    // persisted (unrounded, unanimated) target range (issue #17).
     let _displayLo = null, _displayHi = null;
     let _displayLoF = null, _displayHiF = null;
+    let _targetLo = null, _targetHi = null;
     let _lastRangeWallMs = null;
     let _cachedLayout = null, _cachedLayoutMap = null, _lastLayoutW = 0;
     let _lastRangeLo = -1, _lastRangeHi = -1;
@@ -1473,6 +1480,8 @@ function createFactory() {
         _displayHi = null;
         _displayLoF = null;
         _displayHiF = null;
+        _targetLo = null;
+        _targetHi = null;
         _lastRangeWallMs = null;
         _autoToneAppliedName = undefined;
         _cancelPendingToneChangeLoad();
@@ -1488,6 +1497,16 @@ function createFactory() {
     // toward it (issue #17) rather than snapping — the same target
     // selection as before, just applied through a frame-rate-independent
     // exponential lerp so a re-target doesn't jump-cut the keyboard.
+    //
+    // The "is the current range still good enough" hysteresis check below
+    // is evaluated against the persisted target (_targetLo/_targetHi), not
+    // against the in-flight eased/rounded _displayLo/_displayHi. Checking
+    // against the eased value would let an upward re-target satisfy the
+    // slack check (and stop retargeting) before the float accumulators had
+    // actually finished converging, freezing the keyboard a few semitones
+    // short of the octave-aligned target. The eased values always keep
+    // moving toward _targetLo/_targetHi every frame below, independent of
+    // whether this frame picked a new target or kept the existing one.
     function _updateDisplayRange(notes, chords, t) {
         const wallMs = performance.now();
         const dtSec = _lastRangeWallMs !== null
@@ -1496,27 +1515,30 @@ function createFactory() {
         _lastRangeWallMs = wallMs;
 
         const raw = _visibleMidiRange(notes, chords, t);
-        let targetLo, targetHi;
 
         if (!raw) {
-            if (_displayLo !== null) return;
-            const full = detectRange(notes, chords);
-            if (full && full.lo <= full.hi) {
-                targetLo = full.lo;
-                targetHi = full.hi;
-            } else {
-                // 48 = C3, 95 = B6 — matches detectRange's
-                // empty-chart fallback after octave-boundary
-                // rounding + the 47-semitone-minimum-span while
-                // loop. Keeping these in lockstep means the two
-                // fallback paths produce the same visible
-                // keyboard span.
-                targetLo = 48;
-                targetHi = 95;
+            if (_targetLo === null) {
+                const full = detectRange(notes, chords);
+                if (full && full.lo <= full.hi) {
+                    _targetLo = full.lo;
+                    _targetHi = full.hi;
+                } else {
+                    // 48 = C3, 95 = B6 — matches detectRange's
+                    // empty-chart fallback after octave-boundary
+                    // rounding + the 47-semitone-minimum-span while
+                    // loop. Keeping these in lockstep means the two
+                    // fallback paths produce the same visible
+                    // keyboard span.
+                    _targetLo = 48;
+                    _targetHi = 95;
+                }
             }
-        } else if (_displayLo !== null && raw.lo >= _displayLo && raw.hi <= _displayHi &&
-                   raw.lo - _displayLo < 12 && _displayHi - raw.hi < 12) {
-            return;
+            // else: hold the existing target through the rest — nothing to
+            // retarget from, but any in-flight ease below still completes.
+        } else if (_targetLo !== null && raw.lo >= _targetLo && raw.hi <= _targetHi &&
+                   raw.lo - _targetLo < 12 && _targetHi - raw.hi < 12) {
+            // Current target still comfortably covers raw — keep it as-is
+            // (the ease below keeps converging toward it regardless).
         } else {
             let lo = Math.max(0, raw.lo - 2);
             let hi = Math.min(127, raw.hi + 2);
@@ -1525,18 +1547,18 @@ function createFactory() {
             while (hi - lo < 47) {
                 if (lo > 0) lo -= 12; else hi = Math.min(127, hi + 12);
             }
-            targetLo = lo;
-            targetHi = hi;
+            _targetLo = lo;
+            _targetHi = hi;
         }
 
         if (_displayLoF === null) {
             // First range of a chart (or right after a reset) — snap
             // instantly rather than easing in from nothing.
-            _displayLoF = targetLo;
-            _displayHiF = targetHi;
+            _displayLoF = _targetLo;
+            _displayHiF = _targetHi;
         } else {
             const eased = _lerpDisplayRange(
-                _displayLoF, _displayHiF, targetLo, targetHi, dtSec, RANGE_LERP_TAU_SEC);
+                _displayLoF, _displayHiF, _targetLo, _targetHi, dtSec, RANGE_LERP_TAU_SEC);
             _displayLoF = eased.lo;
             _displayHiF = eased.hi;
         }
@@ -2092,7 +2114,7 @@ function createFactory() {
             return;
         }
 
-        _draw(_latestBundle.notes, _latestBundle.chords, _latestBundle.currentTime, _latestBundle.beats, _latestBundle.templates);
+        _draw(_latestBundle.notes, _latestBundle.chords, _latestBundle.currentTime, _latestBundle.beats, _latestBundle.chordTemplates);
         _maybeFollowToneChange(_latestBundle);
     }
 
@@ -2156,7 +2178,7 @@ function createFactory() {
 
     // ── Drawing ──
 
-    function _draw(notes, chords, t, beats, templates) {
+    function _draw(notes, chords, t, beats, chordTemplates) {
         if (!_pianoCanvas || !_pianoCtx) return;
 
         _latestNotes = notes;
@@ -2254,7 +2276,7 @@ function createFactory() {
         ctx.lineTo(W - padR, nowLineY);
         ctx.stroke();
 
-        _drawScrollingNotes(ctx, notes, chords, t, layoutMap, noteAreaTop, nowLineY, templates);
+        _drawScrollingNotes(ctx, notes, chords, t, layoutMap, noteAreaTop, nowLineY, chordTemplates, padL, W - padR);
         _drawControllerRangeOverlay(ctx, layout, kbTop);
         _drawKeyboard(ctx, layout, kbTop, kbH, notes, chords, t);
 
@@ -2290,7 +2312,7 @@ function createFactory() {
         }
     }
 
-    function _drawScrollingNotes(ctx, notes, chords, t, layoutMap, topY, nowLineY, templates) {
+    function _drawScrollingNotes(ctx, notes, chords, t, layoutMap, topY, nowLineY, chordTemplates, boundsL, boundsR) {
         const allNotes = [];
 
         if (notes) {
@@ -2389,10 +2411,10 @@ function createFactory() {
         }
 
         // Chord-name floating labels — drawn after all bars so they sit on
-        // top, above the leftmost (hand-filtered) note of each currently
-        // sustaining named chord (issue #19).
-        if (_cfg.showNoteNames && templates) {
-            const activeChordLabels = _activeChordLabels(chords, templates, t, _cfg.handFilter);
+        // top, above the leftmost (hand-filtered, currently-sounding) note
+        // of each active named chord (issue #19).
+        if (_cfg.showNoteNames && chordTemplates) {
+            const activeChordLabels = _activeChordLabels(chords, chordTemplates, t, _cfg.handFilter);
             if (activeChordLabels.length) {
                 const labelFontSize = 11;
                 const labelPadX = 5;
@@ -2406,8 +2428,13 @@ function createFactory() {
                     if (!key) continue;
                     const x = key.x + key.w / 2;
                     const tw = ctx.measureText(label.name).width;
-                    const lx = x - tw / 2 - labelPadX;
                     const lw = tw + labelPadX * 2;
+                    // Clamp to the drawable area so a label near either edge
+                    // stays fully visible instead of running off-canvas.
+                    let lx = x - tw / 2 - labelPadX;
+                    if (boundsL != null) lx = Math.max(lx, boundsL);
+                    if (boundsR != null) lx = Math.min(lx, boundsR - lw);
+                    const textX = lx + lw / 2;
 
                     ctx.fillStyle = 'rgba(10,10,28,0.82)';
                     _roundRect(ctx, lx, labelY, lw, labelH, 4);
@@ -2416,7 +2443,7 @@ function createFactory() {
                     ctx.fillStyle = '#fff';
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
-                    ctx.fillText(label.name, x, labelY + labelH / 2);
+                    ctx.fillText(label.name, textX, labelY + labelH / 2);
                 }
             }
         }
