@@ -49,6 +49,25 @@ const OCTAVE_AUTO_LOOKAHEAD_SEC = 0.5;
 const OCTAVE_CUE_LOOKAHEAD_SEC = 1.5;
 const PITCH_BEND_RANGE_ST = 2;
 
+// Exponential time-constant for the display-range lerp (issue #17): the
+// visible keyboard range eases toward its target instead of snapping,
+// ~63% of the way there after this many seconds, frame-rate independent.
+const RANGE_LERP_TAU_SEC = 0.12;
+// Wall-clock delta is clamped to this so a backgrounded/throttled tab
+// doesn't produce one giant jump-cut when the frame loop resumes.
+const RANGE_LERP_MAX_DT_SEC = 0.1;
+
+// Eases {lo, hi} toward {targetLo, targetHi} by one frame's worth of an
+// exponential decay. Pure so the animation math is unit-testable outside
+// the per-instance closure.
+function _lerpDisplayRange(lo, hi, targetLo, targetHi, dtSec, tau) {
+    const alpha = 1 - Math.exp(-Math.max(dtSec, 0) / tau);
+    return {
+        lo: lo + (targetLo - lo) * alpha,
+        hi: hi + (targetHi - hi) * alpha,
+    };
+}
+
 // ── Persisted settings ───────────────────────────────────────────────
 
 const STORE_KEYS = {
@@ -1111,8 +1130,12 @@ function createFactory() {
     const _wrongFlashes = [];
     const _missedNoteKeys = new Set();
 
-    // Display range cache
+    // Display range cache. _displayLo/_displayHi are the rounded integer
+    // bounds the renderer uses; _displayLoF/_displayHiF are the underlying
+    // float accumulators that ease toward the target range (issue #17).
     let _displayLo = null, _displayHi = null;
+    let _displayLoF = null, _displayHiF = null;
+    let _lastRangeWallMs = null;
     let _cachedLayout = null, _cachedLayoutMap = null, _lastLayoutW = 0;
     let _lastRangeLo = -1, _lastRangeHi = -1;
 
@@ -1414,6 +1437,9 @@ function createFactory() {
         _lastRangeHi = -1;
         _displayLo = null;
         _displayHi = null;
+        _displayLoF = null;
+        _displayHiF = null;
+        _lastRangeWallMs = null;
         _autoToneAppliedName = undefined;
         _cancelPendingToneChangeLoad();
         // Wave C: no _primeLatestSnapshot — we don't consult the
@@ -1424,14 +1450,26 @@ function createFactory() {
 
     // ── Display range update (per-instance) ──
 
+    // Computes the desired target range, then eases the displayed range
+    // toward it (issue #17) rather than snapping — the same target
+    // selection as before, just applied through a frame-rate-independent
+    // exponential lerp so a re-target doesn't jump-cut the keyboard.
     function _updateDisplayRange(notes, chords, t) {
+        const wallMs = performance.now();
+        const dtSec = _lastRangeWallMs !== null
+            ? Math.min(Math.max((wallMs - _lastRangeWallMs) / 1000, 0), RANGE_LERP_MAX_DT_SEC)
+            : 0;
+        _lastRangeWallMs = wallMs;
+
         const raw = _visibleMidiRange(notes, chords, t);
+        let targetLo, targetHi;
+
         if (!raw) {
             if (_displayLo !== null) return;
             const full = detectRange(notes, chords);
             if (full && full.lo <= full.hi) {
-                _displayLo = full.lo;
-                _displayHi = full.hi;
+                targetLo = full.lo;
+                targetHi = full.hi;
             } else {
                 // 48 = C3, 95 = B6 — matches detectRange's
                 // empty-chart fallback after octave-boundary
@@ -1439,28 +1477,38 @@ function createFactory() {
                 // loop. Keeping these in lockstep means the two
                 // fallback paths produce the same visible
                 // keyboard span.
-                _displayLo = 48;
-                _displayHi = 95;
+                targetLo = 48;
+                targetHi = 95;
             }
+        } else if (_displayLo !== null && raw.lo >= _displayLo && raw.hi <= _displayHi &&
+                   raw.lo - _displayLo < 12 && _displayHi - raw.hi < 12) {
             return;
+        } else {
+            let lo = Math.max(0, raw.lo - 2);
+            let hi = Math.min(127, raw.hi + 2);
+            lo = Math.floor(lo / 12) * 12;
+            hi = Math.ceil((hi + 1) / 12) * 12 - 1;
+            while (hi - lo < 47) {
+                if (lo > 0) lo -= 12; else hi = Math.min(127, hi + 12);
+            }
+            targetLo = lo;
+            targetHi = hi;
         }
 
-        if (_displayLo !== null && raw.lo >= _displayLo && raw.hi <= _displayHi) {
-            const loSlack = raw.lo - _displayLo;
-            const hiSlack = _displayHi - raw.hi;
-            if (loSlack < 12 && hiSlack < 12) return;
+        if (_displayLoF === null) {
+            // First range of a chart (or right after a reset) — snap
+            // instantly rather than easing in from nothing.
+            _displayLoF = targetLo;
+            _displayHiF = targetHi;
+        } else {
+            const eased = _lerpDisplayRange(
+                _displayLoF, _displayHiF, targetLo, targetHi, dtSec, RANGE_LERP_TAU_SEC);
+            _displayLoF = eased.lo;
+            _displayHiF = eased.hi;
         }
 
-        let lo = Math.max(0, raw.lo - 2);
-        let hi = Math.min(127, raw.hi + 2);
-        lo = Math.floor(lo / 12) * 12;
-        hi = Math.ceil((hi + 1) / 12) * 12 - 1;
-        while (hi - lo < 47) {
-            if (lo > 0) lo -= 12; else hi = Math.min(127, hi + 12);
-        }
-
-        _displayLo = lo;
-        _displayHi = hi;
+        _displayLo = Math.round(_displayLoF);
+        _displayHi = Math.round(_displayHiF);
     }
 
     // ── Canvas / overlay management ──
@@ -2787,6 +2835,7 @@ if (typeof module !== 'undefined' && module.exports) {
         _programChangeInstrumentIndex, _pitchBendSemitones,
         _controllerRangeOverlayBounds,
         _gmForToneName, _activeToneNameAt, _keyboardGlowBlur,
+        _lerpDisplayRange,
         matchesArrangement: createFactory.matchesArrangement,
         _createFactory: createFactory,
     };

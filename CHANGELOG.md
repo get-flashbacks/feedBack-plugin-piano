@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Smoothed keyboard display-range transitions (issue #17): the visible keyboard range now eases toward a new target with a frame-rate-independent exponential lerp instead of snapping instantly, so an octave re-target during playback no longer jump-cuts the keyboard.
 - Tone-change awareness (issue #9): the chart's `tone_changes` now drive which WebAudioFont instrument plays on the focused playback panel, so a mid-song tone change (e.g. Keys → Violin) is reflected in playback instead of staying on whatever instrument was loaded at song start. (Under splitscreen, only the focused panel drives the shared synth — background panels don't fight over which instrument is loaded.) On by default; toggle "Auto tone" in settings to disable and keep the manually-selected Sound dropdown instrument regardless of tone changes.
 
 ### Fixed
