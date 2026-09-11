@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add `CLAUDE.md` (issue #3): documents the `setRenderer` viz-renderer contract implementation and the `window.slopsmithSplitscreen` focus-change integration, since this plugin is the ecosystem's reference example for both.
 - Add `.coderabbit.yaml` (issue #3).
+- Pin the verified `feedback-plugin-splitscreen` version (**v1.14.5**) the six-method focus-change surface was checked against, as a checked floor rather than a hard requirement — see [feedback-plugin-splitscreen#47](https://github.com/get-flashbacks/feedback-plugin-splitscreen/issues/47).
 
 ### Added
 
