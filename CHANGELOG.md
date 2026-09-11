@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- Add `CLAUDE.md` (issue #3): documents the `setRenderer` viz-renderer contract implementation and the `window.slopsmithSplitscreen` focus-change integration, since this plugin is the ecosystem's reference example for both.
+- Add `.coderabbit.yaml` (issue #3).
+
 ### Added
 
 - Floating chord-name labels (issue #19): a chart's named chords (e.g. "Cmaj7") now float above the highway while sustaining, positioned over the chord's leftmost hand-filtered, currently-sounding note. Reuses the existing "Show note names" toggle and requires the host bundle to provide a `chordTemplates` table indexed by each chord's `id`; without it, rendering is unaffected.
