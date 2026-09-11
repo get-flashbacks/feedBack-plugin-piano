@@ -1,0 +1,20 @@
+# CodeRabbit configuration — see https://docs.coderabbit.ai/reference/configuration
+# No other repo in this org ships a .coderabbit.yaml yet (checked as of this
+# commit), so there was no local baseline to copy. This starts from
+# CodeRabbit's documented defaults with only the settings this plugin's
+# review workflow actually needs; adjust if it doesn't behave as expected
+# once CodeRabbit runs against a real PR.
+
+language: en-US
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+
+chat:
+  auto_reply: true
