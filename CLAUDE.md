@@ -67,7 +67,12 @@ Under splitscreen, multiple panels can run a Piano instance simultaneously,
 but only one keyboard input source (MIDI, or the on-screen keyboard) should
 ever be "live" at a time — the one the user is currently looking at/using.
 `window.slopsmithSplitscreen` exposes a small helper surface for this;
-Piano is the only plugin observed consuming it end-to-end.
+Piano is the only plugin observed consuming it end-to-end. The full
+six-method surface (`isActive`/`isCanvasFocused`/`panelChromeFor`/
+`settingsAnchorFor`/`onFocusChange`/`offFocusChange`) is verified present
+as of `feedback-plugin-splitscreen` **v1.14.5**; not a hard requirement
+per the full-surface-validation design described next — but this is the
+minimum version this integration has actually been checked against.
 
 `_ssActive()` (see "Splitscreen helper wrappers" in `screen.js`) validates
 the **entire** surface this plugin needs before treating splitscreen as
