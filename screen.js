@@ -370,6 +370,22 @@ const WAF_BASE = 'https://surikov.github.io/webaudiofontdata/sound/';
 const WAF_PLAYER_URL = 'https://surikov.github.io/webaudiofont/npm/dist/WebAudioFontPlayer.js';
 const WAF_SF = 'JCLive_sf2_file';
 
+// Subresource Integrity for the third-party WebAudioFont scripts (issue
+// #12). `_loadScript()` applies `integrity` + `crossorigin="anonymous"`
+// whenever a hash is present here, so filling these in is the entire fix
+// — no other code changes needed. Left null until someone whose network
+// can actually reach surikov.github.io computes them:
+//   openssl dgst -sha384 -binary <file> | openssl base64 -A
+// then set the value as `'sha384-<base64>'`. A wrong hash doesn't fail
+// open — the browser refuses to execute the script — so never fabricate
+// one; leaving it null keeps today's unpinned-but-working behavior.
+const WAF_PLAYER_INTEGRITY = null;
+// Map of GM program number -> SRI hash for that instrument's soundfont
+// file (see INSTRUMENTS/_wafUrl below). Populate only entries that have
+// been verified against the real file bytes; an unlisted GM number just
+// loads without integrity pinning, same as before this fix.
+const WAF_SOUNDFONT_INTEGRITY = {};
+
 const INSTRUMENTS = [
     { name: 'Grand Piano',    gm: 0  },
     { name: 'Electric Piano',  gm: 4  },
@@ -452,11 +468,15 @@ function _activeToneNameAt(toneChanges, toneBase, t) {
     return active;
 }
 
-function _loadScript(url) {
+function _loadScript(url, integrity) {
     return new Promise((resolve, reject) => {
         if (document.querySelector(`script[src="${url}"]`)) { resolve(); return; }
         const s = document.createElement('script');
         s.src = url;
+        if (integrity) {
+            s.integrity = integrity;
+            s.crossOrigin = 'anonymous';
+        }
         s.onload = resolve;
         s.onerror = () => reject(new Error('Failed to load ' + url));
         document.head.appendChild(s);
@@ -471,7 +491,7 @@ async function _synthInit() {
     if (_synthPlayer) return;
     try {
         if (!_playerScriptLoaded) {
-            await _loadScript(WAF_PLAYER_URL);
+            await _loadScript(WAF_PLAYER_URL, WAF_PLAYER_INTEGRITY);
             _playerScriptLoaded = true;
         }
         if (typeof WebAudioFontPlayer === 'undefined') return;
@@ -504,7 +524,7 @@ async function _synthLoadInstrumentByGm(gm, label) {
 
     try {
         if (!window[varName]) {
-            await _loadScript(_wafUrl(gm));
+            await _loadScript(_wafUrl(gm), WAF_SOUNDFONT_INTEGRITY[gm] || null);
         }
         // A newer call to this function started (and possibly already
         // finished) while this one's script fetch was in flight -- that

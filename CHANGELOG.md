@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Plumb Subresource Integrity support into the WebAudioFont script loader (issue #12): `_loadScript()` now accepts an `integrity` hash and sets `integrity` + `crossorigin="anonymous"` on the dynamically-created `<script>` tag when one is supplied, for both `WAF_PLAYER_URL` and the per-instrument soundfont files loaded via `_wafUrl(gm)`. The actual hashes (`WAF_PLAYER_INTEGRITY`, `WAF_SOUNDFONT_INTEGRITY`) are left unset pending someone with network access to `surikov.github.io` computing them from the real file bytes — an incorrect hash fails closed (browser refuses to run the script) rather than failing open, so none are fabricated here. Loading is unaffected until hashes are filled in.
+
 ### Documentation
 
 - Add `CLAUDE.md` (issue #3): documents the `setRenderer` viz-renderer contract implementation and the `window.slopsmithSplitscreen` focus-change integration, since this plugin is the ecosystem's reference example for both.
