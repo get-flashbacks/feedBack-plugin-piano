@@ -380,11 +380,14 @@ const WAF_SF = 'JCLive_sf2_file';
 // open — the browser refuses to execute the script — so never fabricate
 // one; leaving it null keeps today's unpinned-but-working behavior.
 const WAF_PLAYER_INTEGRITY = null;
-// Map of GM program number -> SRI hash for that instrument's soundfont
-// file (see INSTRUMENTS/_wafUrl below). Populate only entries that have
-// been verified against the real file bytes; an unlisted GM number just
-// loads without integrity pinning, same as before this fix.
-const WAF_SOUNDFONT_INTEGRITY = {};
+// GM program number -> SRI hash for that instrument's soundfont file (see
+// INSTRUMENTS/_wafUrl below). A Map, not a plain object -- `gm` reaches
+// here indirectly from chart/MIDI data (tone-name matching, program
+// change), so keying a plain object with it risks prototype/inherited-key
+// lookups (e.g. gm resolving to "constructor"). Populate only entries
+// that have been verified against the real file bytes; an unlisted GM
+// number just loads without integrity pinning, same as before this fix.
+const WAF_SOUNDFONT_INTEGRITY = new Map();
 
 const INSTRUMENTS = [
     { name: 'Grand Piano',    gm: 0  },
@@ -470,7 +473,15 @@ function _activeToneNameAt(toneChanges, toneBase, t) {
 
 function _loadScript(url, integrity) {
     return new Promise((resolve, reject) => {
-        if (document.querySelector(`script[src="${url}"]`)) { resolve(); return; }
+        const existing = document.querySelector(`script[src="${url}"]`);
+        if (existing) {
+            if (!integrity || existing.integrity === integrity) { resolve(); return; }
+            // A tag for this URL is already present but wasn't loaded under
+            // (or was loaded under a different) integrity hash -- trusting
+            // it here would silently bypass the SRI check for this call.
+            // Drop it and fall through to a fresh, verified script load.
+            existing.remove();
+        }
         const s = document.createElement('script');
         s.src = url;
         if (integrity) {
@@ -524,7 +535,7 @@ async function _synthLoadInstrumentByGm(gm, label) {
 
     try {
         if (!window[varName]) {
-            await _loadScript(_wafUrl(gm), WAF_SOUNDFONT_INTEGRITY[gm] || null);
+            await _loadScript(_wafUrl(gm), WAF_SOUNDFONT_INTEGRITY.get(gm) || null);
         }
         // A newer call to this function started (and possibly already
         // finished) while this one's script fetch was in flight -- that
