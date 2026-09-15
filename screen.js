@@ -1521,6 +1521,12 @@ function createFactory() {
 
     function _resetForNewChart() {
         _resetScoring();
+        // Issue #32 review: a missed MIDI Note Off (tab switch, device
+        // disconnect) could otherwise leave a stale entry in _heldNotes
+        // past its song, permanently blocking practiceMode=off retargeting
+        // on the next chart. _releaseAllHeld() also silences the synth for
+        // any note that's still sounding, not just the bookkeeping.
+        _releaseAllHeld();
         _cachedLayout = null;
         _cachedLayoutMap = null;
         _lastLayoutW = 0;
