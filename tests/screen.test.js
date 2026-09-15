@@ -1010,7 +1010,7 @@ test('_alignedTargetRange expands raw notes to an octave-aligned, padded, min-47
     assert.deepEqual(mod._alignedTargetRange(30, 60), { lo: 24, hi: 71 });
 });
 
-test('_shouldHoldTargetForPractice holds only when practiceMode is off, a target exists, and (same measure or a note is held)', () => {
+test('_shouldHoldTargetForPractice holds only when practiceMode is off, a target exists, boundary data exists, and (same measure or a note is held)', () => {
     // practiceMode on: never hold, regardless of everything else.
     assert.equal(mod._shouldHoldTargetForPractice(true, 24, 1, 1, 0), false);
     // No target yet: nothing to hold.
@@ -1023,6 +1023,11 @@ test('_shouldHoldTargetForPractice holds only when practiceMode is off, a target
     assert.equal(mod._shouldHoldTargetForPractice(false, 24, 3, 2, 1), true);
     // No boundary data (currentMeasure null), no held notes: don't hold.
     assert.equal(mod._shouldHoldTargetForPractice(false, 24, null, 2, 0), false);
+    // No boundary data (currentMeasure null), WITH a held note: still don't
+    // hold — per issue #32, a chart with no beats/measure data (GP imports,
+    // legacy sloppak) retargets unrestricted, same as practiceMode=on;
+    // there's no boundary to gate the held-note check against either.
+    assert.equal(mod._shouldHoldTargetForPractice(false, 24, null, 2, 1), false);
 });
 
 // Shared by the practiceMode boundary-gate tests below (issue #32 review:
@@ -1207,6 +1212,56 @@ test('practiceMode=off: releasing a held key while sustain is active still allow
     }
     assert.equal(lastWhiteKeyLabel(), 'C1',
         'a sustained-but-released note should not block retargeting once a measure boundary has been crossed');
+
+    renderer.destroy();
+});
+
+test('practiceMode=off: a chart with no beat/measure data retargets freely even while a note is held', () => {
+    // Regression coverage for a gap CodeRabbit's Linked Issues pre-merge
+    // check flagged on this PR: per issue #32 (and this PR's own
+    // CHANGELOG entry), a chart with no beats/measure data at all — GP
+    // imports, legacy sloppak — should behave like practiceMode=on
+    // (retarget unrestricted), not just for the measure-boundary check but
+    // for the held-note freeze too. There's no boundary to gate either
+    // restriction against when `beats` is empty.
+    const { harness, renderer } = initRendererWithHarness({
+        storage: { piano_auto_tone: 'false', piano_note_names: 'false' },
+    });
+    const overlay = harness.doc.elementsById.player.children
+        .find(el => el.className === 'piano-highway-canvas');
+    const ctx = overlay.getContext('2d');
+    const lastWhiteKeyLabel = () => {
+        const first = ctx.fillTextCalls.find(call => /^[A-G]$|^C-?\d+$/.test(call.text));
+        return first && first.text;
+    };
+
+    renderer.draw({
+        isReady: true,
+        currentTime: 0,
+        beats: [], // no beat/measure data at all
+        notes: [{ t: 0, s: 1, f: 0, sus: 0.2 }], // s=1,f=0 -> midi 24
+        chords: [],
+    });
+
+    renderer._handleNoteOn(60, 100); // a key is physically held down
+
+    const highBundle = {
+        isReady: true,
+        currentTime: 10,
+        beats: [],
+        notes: [
+            { t: 10, s: 1, f: 6, sus: 0.2 },
+            { t: 10, s: 2, f: 12, sus: 0.2 },
+        ],
+        chords: [],
+    };
+    for (let i = 0; i < 20; i++) {
+        advanceClock(harness, 150);
+        ctx.fillTextCalls.length = 0;
+        renderer.draw(highBundle);
+    }
+    assert.equal(lastWhiteKeyLabel(), 'C1',
+        'no beat/measure data should retarget freely, held note notwithstanding');
 
     renderer.destroy();
 });
