@@ -986,6 +986,155 @@ test('renderer converges the eased display range to the octave-aligned target af
     renderer.destroy();
 });
 
+test('_currentMeasureAt returns null with no beats or before the first beat', () => {
+    assert.equal(mod._currentMeasureAt([], 5), null);
+    assert.equal(mod._currentMeasureAt(null, 5), null);
+    assert.equal(mod._currentMeasureAt([{ time: 2, measure: 1 }], 1), null);
+});
+
+test('_currentMeasureAt resolves the measure of the latest beat at or before t', () => {
+    const beats = [
+        { time: 0, measure: 1 },
+        { time: 2, measure: 1 },
+        { time: 4, measure: 2 },
+        { time: 6, measure: 3 },
+    ];
+    assert.equal(mod._currentMeasureAt(beats, 0), 1);
+    assert.equal(mod._currentMeasureAt(beats, 3.9), 1);
+    assert.equal(mod._currentMeasureAt(beats, 4), 2);
+    assert.equal(mod._currentMeasureAt(beats, 100), 3);
+});
+
+test('practiceMode=off (default): display range does not retarget within the same measure', () => {
+    // Regression coverage for issue #32's boundary gate. Same convergence
+    // scenario as the eased-retarget test above, but this time `beats`
+    // carries real measure data that never advances past measure 1 — so
+    // the upward retarget should never start, and the display should stay
+    // frozen at the initial [0,47] target instead of drifting to [24,71].
+    const { harness, renderer } = initRendererWithHarness({
+        storage: { piano_auto_tone: 'false', piano_note_names: 'false' },
+    });
+    const overlay = harness.doc.elementsById.player.children
+        .find(el => el.className === 'piano-highway-canvas');
+    const ctx = overlay.getContext('2d');
+    const beats = [{ time: 0, measure: 1 }];
+
+    renderer.draw({
+        isReady: true,
+        currentTime: 0,
+        beats,
+        notes: [{ t: 0, s: 1, f: 0, sus: 0.2 }], // s=1,f=0 -> midi 24
+        chords: [],
+    });
+
+    const highBundle = {
+        isReady: true,
+        currentTime: 10,
+        beats, // still measure 1 — no boundary crossed
+        notes: [
+            { t: 10, s: 1, f: 6, sus: 0.2 },  // s=1,f=6 -> midi 30
+            { t: 10, s: 2, f: 12, sus: 0.2 }, // s=2,f=12 -> midi 60
+        ],
+        chords: [],
+    };
+    let lastLabel = null;
+    for (let i = 0; i < 20; i++) {
+        advanceClock(harness, 150);
+        ctx.fillTextCalls.length = 0;
+        renderer.draw(highBundle);
+        const first = ctx.fillTextCalls.find(call => /^[A-G]$|^C-?\d+$/.test(call.text));
+        lastLabel = first && first.text;
+    }
+
+    assert.equal(lastLabel, 'C-1',
+        'display range should stay pinned to the original [0,47] target while no measure boundary has been crossed');
+
+    renderer.destroy();
+});
+
+test('practiceMode=off: display range retargets once a new measure boundary is crossed', () => {
+    const { harness, renderer } = initRendererWithHarness({
+        storage: { piano_auto_tone: 'false', piano_note_names: 'false' },
+    });
+    const overlay = harness.doc.elementsById.player.children
+        .find(el => el.className === 'piano-highway-canvas');
+    const ctx = overlay.getContext('2d');
+
+    renderer.draw({
+        isReady: true,
+        currentTime: 0,
+        beats: [{ time: 0, measure: 1 }],
+        notes: [{ t: 0, s: 1, f: 0, sus: 0.2 }], // s=1,f=0 -> midi 24
+        chords: [],
+    });
+
+    const highBundle = {
+        isReady: true,
+        currentTime: 10,
+        beats: [{ time: 0, measure: 1 }, { time: 4, measure: 2 }], // boundary crossed
+        notes: [
+            { t: 10, s: 1, f: 6, sus: 0.2 },  // s=1,f=6 -> midi 30
+            { t: 10, s: 2, f: 12, sus: 0.2 }, // s=2,f=12 -> midi 60
+        ],
+        chords: [],
+    };
+    let lastLabel = null;
+    for (let i = 0; i < 20; i++) {
+        advanceClock(harness, 150);
+        ctx.fillTextCalls.length = 0;
+        renderer.draw(highBundle);
+        const first = ctx.fillTextCalls.find(call => /^[A-G]$|^C-?\d+$/.test(call.text));
+        lastLabel = first && first.text;
+    }
+
+    assert.equal(lastLabel, 'C1',
+        'display range should retarget to [24,71] once a measure boundary separates it from the last shift');
+
+    renderer.destroy();
+});
+
+test('practiceMode=on: display range retargets freely even without a measure boundary', () => {
+    const { harness, renderer } = initRendererWithHarness({
+        storage: { piano_auto_tone: 'false', piano_note_names: 'false', piano_practice_mode: 'true' },
+    });
+    const overlay = harness.doc.elementsById.player.children
+        .find(el => el.className === 'piano-highway-canvas');
+    const ctx = overlay.getContext('2d');
+    const beats = [{ time: 0, measure: 1 }]; // never advances
+
+    renderer.draw({
+        isReady: true,
+        currentTime: 0,
+        beats,
+        notes: [{ t: 0, s: 1, f: 0, sus: 0.2 }], // s=1,f=0 -> midi 24
+        chords: [],
+    });
+
+    const highBundle = {
+        isReady: true,
+        currentTime: 10,
+        beats,
+        notes: [
+            { t: 10, s: 1, f: 6, sus: 0.2 },
+            { t: 10, s: 2, f: 12, sus: 0.2 },
+        ],
+        chords: [],
+    };
+    let lastLabel = null;
+    for (let i = 0; i < 20; i++) {
+        advanceClock(harness, 150);
+        ctx.fillTextCalls.length = 0;
+        renderer.draw(highBundle);
+        const first = ctx.fillTextCalls.find(call => /^[A-G]$|^C-?\d+$/.test(call.text));
+        lastLabel = first && first.text;
+    }
+
+    assert.equal(lastLabel, 'C1',
+        'practiceMode should retarget freely regardless of measure-boundary data, matching pre-#32 behavior');
+
+    renderer.destroy();
+});
+
 test('renderer skips chord-name labels once "Show note names" is turned off', () => {
     const { harness, renderer } = initRendererWithHarness({
         storage: { piano_auto_tone: 'false', piano_note_names: 'false' },

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Practice-mode gate for display-range retargeting (issue #32): a new "Practice mode (free retarget)" setting, off by default. When off ("performance" behavior), the visible keyboard range may only start a new re-target after crossing a measure boundary (via the chart's `beats` data) since the last shift, and never while the player currently has a note held down — so the keyboard doesn't re-center mid-phrase or out from under a held note during a performance take. When on, or when the chart carries no measure/beat data, retargeting behaves as before (issue #17's eased retarget fires as soon as the visible-range hysteresis calls for it).
+
 ### Documentation
 
 - Add `CLAUDE.md` (issue #3): documents the `setRenderer` viz-renderer contract implementation and the `window.slopsmithSplitscreen` focus-change integration, since this plugin is the ecosystem's reference example for both.

@@ -68,6 +68,21 @@ function _lerpDisplayRange(lo, hi, targetLo, targetHi, dtSec, tau) {
     };
 }
 
+// Resolves the measure number in effect at time `t` from the WS `beats`
+// array ({ time, measure }), i.e. the measure of the latest beat at or
+// before `t`. Returns null when there's no boundary data to consult (no
+// beats, or `t` is before the first beat) — callers treat that as "no
+// boundary info available" and fall back to retargeting freely (issue #32).
+function _currentMeasureAt(beats, t) {
+    if (!beats || !beats.length) return null;
+    let measure = null;
+    for (let i = 0; i < beats.length; i++) {
+        if (beats[i].time > t) break;
+        measure = beats[i].measure;
+    }
+    return measure;
+}
+
 // ── Persisted settings ───────────────────────────────────────────────
 
 const STORE_KEYS = {
@@ -84,6 +99,7 @@ const STORE_KEYS = {
     controllerLo:  'piano_controller_lo',
     controllerHi:  'piano_controller_hi',
     handFilter:     'piano_hand_filter',
+    practiceMode:  'piano_practice_mode',
 };
 
 function _readStore(key) {
@@ -125,6 +141,12 @@ const _cfg = {
     controllerLo:  _readIntOrNull(STORE_KEYS.controllerLo),
     controllerHi:  _readIntOrNull(STORE_KEYS.controllerHi),
     handFilter:     ['L', 'R'].includes(_readStore(STORE_KEYS.handFilter)) ? _readStore(STORE_KEYS.handFilter) : 'both',
+    // Off by default ("performance" behavior, issue #32): the display
+    // range may only re-target at a measure boundary, and never while a
+    // note is physically held. On ("practice" behavior): re-target as
+    // soon as the visible-range hysteresis calls for it, same as before
+    // this setting existed.
+    practiceMode:  _readStore(STORE_KEYS.practiceMode) === 'true',
 };
 
 function _saveCfg(key, val) {
@@ -1177,6 +1199,11 @@ function createFactory() {
     let _displayLoF = null, _displayHiF = null;
     let _targetLo = null, _targetHi = null;
     let _lastRangeWallMs = null;
+    // Measure number (from `beats`) as of the last time a new target was
+    // picked — used by the practiceMode=off boundary gate (issue #32).
+    // null means "no shift has been attributed to a measure yet", which
+    // trivially counts as a boundary crossing the first time it matters.
+    let _lastShiftMeasure = null;
     let _cachedLayout = null, _cachedLayoutMap = null, _lastLayoutW = 0;
     let _lastRangeLo = -1, _lastRangeHi = -1;
 
@@ -1483,6 +1510,7 @@ function createFactory() {
         _targetLo = null;
         _targetHi = null;
         _lastRangeWallMs = null;
+        _lastShiftMeasure = null;
         _autoToneAppliedName = undefined;
         _cancelPendingToneChangeLoad();
         // Wave C: no _primeLatestSnapshot — we don't consult the
@@ -1507,7 +1535,7 @@ function createFactory() {
     // short of the octave-aligned target. The eased values always keep
     // moving toward _targetLo/_targetHi every frame below, independent of
     // whether this frame picked a new target or kept the existing one.
-    function _updateDisplayRange(notes, chords, t) {
+    function _updateDisplayRange(notes, chords, t, beats) {
         const wallMs = performance.now();
         const dtSec = _lastRangeWallMs !== null
             ? Math.min(Math.max((wallMs - _lastRangeWallMs) / 1000, 0), RANGE_LERP_MAX_DT_SEC)
@@ -1515,6 +1543,7 @@ function createFactory() {
         _lastRangeWallMs = wallMs;
 
         const raw = _visibleMidiRange(notes, chords, t);
+        const currentMeasure = _currentMeasureAt(beats, t);
 
         if (!raw) {
             if (_targetLo === null) {
@@ -1532,6 +1561,7 @@ function createFactory() {
                     _targetLo = 48;
                     _targetHi = 95;
                 }
+                _lastShiftMeasure = currentMeasure;
             }
             // else: hold the existing target through the rest — nothing to
             // retarget from, but any in-flight ease below still completes.
@@ -1539,6 +1569,16 @@ function createFactory() {
                    raw.lo - _targetLo < 12 && _targetHi - raw.hi < 12) {
             // Current target still comfortably covers raw — keep it as-is
             // (the ease below keeps converging toward it regardless).
+        } else if (!_cfg.practiceMode && _targetLo !== null &&
+                   ((currentMeasure !== null && currentMeasure === _lastShiftMeasure) || _heldNotes.size > 0)) {
+            // "Performance" mode (issue #32): a re-target is due, but we're
+            // either still inside the measure the last shift happened in
+            // (no boundary crossed since), or the player currently has a
+            // note held down — hold the existing target rather than
+            // shifting mid-phrase / out from under a held note. The ease
+            // below keeps converging toward whatever target is already
+            // set. `currentMeasure === null` (no boundary data) falls
+            // through to the free-retarget branch below, as documented.
         } else {
             let lo = Math.max(0, raw.lo - 2);
             let hi = Math.min(127, raw.hi + 2);
@@ -1549,6 +1589,7 @@ function createFactory() {
             }
             _targetLo = lo;
             _targetHi = hi;
+            _lastShiftMeasure = currentMeasure;
         }
 
         if (_displayLoF === null) {
@@ -1848,6 +1889,10 @@ function createFactory() {
                         border-radius:6px;padding:2px 8px;font-size:10px;color:#ccc;cursor:pointer;">Detect range</button>
                     <span class="piano-octave-status" style="font-size:10px;color:#777;">${_detectStatusText()}</span>
                 </div>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:#999;cursor:pointer;">
+                    <input type="checkbox" class="piano-chk-practice" ${_cfg.practiceMode ? 'checked' : ''}
+                        style="accent-color:#6366f1;"> Practice mode (free retarget)
+                </label>
             </div>
             <div class="piano-range-warn" role="status" style="display:none;color:#f5a623;font-size:10px;margin-top:5px;"></div>`;
 
@@ -1939,6 +1984,9 @@ function createFactory() {
             _detectStep = 'lo';
             _detectCaptureLo = null;
             _updateDetectStatus();
+        };
+        panel.querySelector('.piano-chk-practice').onchange = function () {
+            _saveCfg('practiceMode', this.checked);
         };
     }
 
@@ -2200,7 +2248,7 @@ function createFactory() {
         // is in draw() above (gated on bundle.isReady), so by
         // the time we get here the chart is confirmed loaded
         // even if the per-frame note window is empty.
-        _updateDisplayRange(notes || [], chords || [], t);
+        _updateDisplayRange(notes || [], chords || [], t, beats);
         _updateRangeWarning();
         if (_displayLo === null) {
             ctx.fillStyle = '#040408';
@@ -2929,7 +2977,7 @@ if (typeof module !== 'undefined' && module.exports) {
         _programChangeInstrumentIndex, _pitchBendSemitones,
         _controllerRangeOverlayBounds,
         _gmForToneName, _activeToneNameAt, _keyboardGlowBlur,
-        _lerpDisplayRange, _activeChordLabels,
+        _lerpDisplayRange, _activeChordLabels, _currentMeasureAt,
         matchesArrangement: createFactory.matchesArrangement,
         _createFactory: createFactory,
     };
