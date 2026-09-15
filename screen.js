@@ -69,16 +69,25 @@ function _lerpDisplayRange(lo, hi, targetLo, targetHi, dtSec, tau) {
 }
 
 // Resolves the measure number in effect at time `t` from the WS `beats`
-// array ({ time, measure }), i.e. the measure of the latest beat at or
-// before `t`. Returns null when there's no boundary data to consult (no
-// beats, or `t` is before the first beat) — callers treat that as "no
-// boundary info available" and fall back to retargeting freely (issue #32).
+// array ({ time, measure }), i.e. the measure of the latest DOWNBEAT at or
+// before `t`. Subdivision (non-downbeat) entries carry `measure: -1` (see
+// lib/gp2rs.py's `measure: int  # -1 for non-downbeats` and the host's own
+// `beat.measure >= 0` measure-line check in static/highway.js — this
+// file's own beats-gridline draw code already relies on the same
+// convention via `b.measure > 0`) and must be skipped, not inherited: a
+// naive "last beat at or before t" scan flips to -1 on the very first
+// sub-beat after each downbeat, which would make the practiceMode=off
+// boundary gate re-open almost immediately instead of holding for the
+// whole measure. Returns null when there's no boundary data to consult
+// (no beats, or `t` is before the first downbeat) — callers treat that as
+// "no boundary info available" and fall back to retargeting freely
+// (issue #32).
 function _currentMeasureAt(beats, t) {
     if (!beats || !beats.length) return null;
     let measure = null;
     for (const beat of beats) {
         if (beat.time > t) break;
-        measure = beat.measure;
+        if (beat.measure >= 0) measure = beat.measure;
     }
     return measure;
 }

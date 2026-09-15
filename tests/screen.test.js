@@ -992,17 +992,40 @@ test('_currentMeasureAt returns null with no beats or before the first beat', ()
     assert.equal(mod._currentMeasureAt([{ time: 2, measure: 1 }], 1), null);
 });
 
-test('_currentMeasureAt resolves the measure of the latest beat at or before t', () => {
+test('_currentMeasureAt resolves the measure of the latest downbeat at or before t', () => {
     const beats = [
         { time: 0, measure: 1 },
-        { time: 2, measure: 1 },
-        { time: 4, measure: 2 },
-        { time: 6, measure: 3 },
+        { time: 2, measure: 2 },
+        { time: 4, measure: 3 },
+        { time: 6, measure: 4 },
     ];
     assert.equal(mod._currentMeasureAt(beats, 0), 1);
+    assert.equal(mod._currentMeasureAt(beats, 3.9), 2);
+    assert.equal(mod._currentMeasureAt(beats, 4), 3);
+    assert.equal(mod._currentMeasureAt(beats, 100), 4);
+});
+
+test('_currentMeasureAt ignores subdivision beats (measure: -1) between downbeats', () => {
+    // Regression coverage for a real bug caught on PR #36's review: the WS
+    // `beats` wire format (lib/gp2rs.py's `measure: int  # -1 for
+    // non-downbeats`, mirrored by the host's `beat.measure >= 0`
+    // measure-line check in static/highway.js) interleaves subdivision
+    // beats carrying measure: -1 between downbeats. A naive "inherit
+    // whichever beat is latest" scan would flip to -1 on the very first
+    // sub-beat after each downbeat, defeating the whole point of the
+    // practiceMode=off boundary gate (it would re-open almost immediately
+    // instead of holding for the whole measure).
+    const beats = [
+        { time: 0, measure: 1 },
+        { time: 1, measure: -1 },
+        { time: 2, measure: -1 },
+        { time: 3, measure: -1 },
+        { time: 4, measure: 2 },
+    ];
+    assert.equal(mod._currentMeasureAt(beats, 0), 1);
+    assert.equal(mod._currentMeasureAt(beats, 1), 1, 'a subdivision beat must not override the enclosing downbeat measure');
     assert.equal(mod._currentMeasureAt(beats, 3.9), 1);
     assert.equal(mod._currentMeasureAt(beats, 4), 2);
-    assert.equal(mod._currentMeasureAt(beats, 100), 3);
 });
 
 test('_alignedTargetRange expands raw notes to an octave-aligned, padded, min-47-span target', () => {
@@ -1076,14 +1099,35 @@ function _runPracticeModeScenario(storageOverrides, initialBeats, highBeats) {
     return lastLabel;
 }
 
+// Realistic wire-shaped beats fixtures (issue #32 review, pullfrog): the
+// real WS `beats` array interleaves subdivision beats (measure: -1)
+// between downbeats (measure: N) — see lib/gp2rs.py's `measure: int  # -1
+// for non-downbeats`. Downbeat-only fixtures passed the gate's tests
+// without exercising the bug that inheriting measure from a subdivision
+// beat introduced. `_STILL_MEASURE_1` never reaches a second downbeat by
+// t=10; `_CROSSES_TO_MEASURE_2` reaches one (at t=4) before t=10.
+const _STILL_MEASURE_1 = [
+    { time: 0, measure: 1 },
+    { time: 2, measure: -1 },
+    { time: 4, measure: -1 },
+    { time: 6, measure: -1 },
+    { time: 8, measure: -1 },
+];
+const _CROSSES_TO_MEASURE_2 = [
+    { time: 0, measure: 1 },
+    { time: 2, measure: -1 },
+    { time: 4, measure: 2 },
+    { time: 6, measure: -1 },
+    { time: 8, measure: -1 },
+];
+
 test('practiceMode=off (default): display range does not retarget within the same measure', () => {
     // Regression coverage for issue #32's boundary gate. Same convergence
     // scenario as the eased-retarget test above, but this time `beats`
     // carries real measure data that never advances past measure 1 — so
     // the upward retarget should never start, and the display should stay
     // frozen at the initial [0,47] target instead of drifting to [24,71].
-    const beats = [{ time: 0, measure: 1 }];
-    const lastLabel = _runPracticeModeScenario({}, beats, beats); // still measure 1 — no boundary crossed
+    const lastLabel = _runPracticeModeScenario({}, _STILL_MEASURE_1, _STILL_MEASURE_1);
 
     assert.equal(lastLabel, 'C-1',
         'display range should stay pinned to the original [0,47] target while no measure boundary has been crossed');
@@ -1091,16 +1135,14 @@ test('practiceMode=off (default): display range does not retarget within the sam
 
 test('practiceMode=off: display range retargets once a new measure boundary is crossed', () => {
     const lastLabel = _runPracticeModeScenario({},
-        [{ time: 0, measure: 1 }],
-        [{ time: 0, measure: 1 }, { time: 4, measure: 2 }]); // boundary crossed
+        [{ time: 0, measure: 1 }], _CROSSES_TO_MEASURE_2);
 
     assert.equal(lastLabel, 'C1',
         'display range should retarget to [24,71] once a measure boundary separates it from the last shift');
 });
 
 test('practiceMode=on: display range retargets freely even without a measure boundary', () => {
-    const beats = [{ time: 0, measure: 1 }]; // never advances
-    const lastLabel = _runPracticeModeScenario({ piano_practice_mode: 'true' }, beats, beats);
+    const lastLabel = _runPracticeModeScenario({ piano_practice_mode: 'true' }, _STILL_MEASURE_1, _STILL_MEASURE_1);
 
     assert.equal(lastLabel, 'C1',
         'practiceMode should retarget freely regardless of measure-boundary data, matching pre-#32 behavior');
@@ -1127,7 +1169,7 @@ test('practiceMode=off: retargeting is suppressed while a note is physically hel
     renderer.draw({
         isReady: true,
         currentTime: 0,
-        beats: [{ time: 0, measure: 1 }],
+        beats: _STILL_MEASURE_1,
         notes: [{ t: 0, s: 1, f: 0, sus: 0.2 }], // s=1,f=0 -> midi 24
         chords: [],
     });
@@ -1137,7 +1179,7 @@ test('practiceMode=off: retargeting is suppressed while a note is physically hel
     const highBundle = {
         isReady: true,
         currentTime: 10,
-        beats: [{ time: 0, measure: 1 }, { time: 4, measure: 2 }], // boundary crossed
+        beats: _CROSSES_TO_MEASURE_2, // boundary crossed (interleaved with subdivision beats)
         notes: [
             { t: 10, s: 1, f: 6, sus: 0.2 },
             { t: 10, s: 2, f: 12, sus: 0.2 },
@@ -1186,7 +1228,7 @@ test('practiceMode=off: releasing a held key while sustain is active still allow
     renderer.draw({
         isReady: true,
         currentTime: 0,
-        beats: [{ time: 0, measure: 1 }, { time: 4, measure: 2 }], // boundary already available
+        beats: _CROSSES_TO_MEASURE_2, // boundary already available
         notes: [{ t: 0, s: 1, f: 0, sus: 0.2 }], // s=1,f=0 -> midi 24
         chords: [],
     });
@@ -1198,7 +1240,7 @@ test('practiceMode=off: releasing a held key while sustain is active still allow
     const highBundle = {
         isReady: true,
         currentTime: 10,
-        beats: [{ time: 0, measure: 1 }, { time: 4, measure: 2 }], // boundary crossed
+        beats: _CROSSES_TO_MEASURE_2, // boundary crossed (interleaved with subdivision beats)
         notes: [
             { t: 10, s: 1, f: 6, sus: 0.2 },
             { t: 10, s: 2, f: 12, sus: 0.2 },
