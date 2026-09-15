@@ -76,9 +76,9 @@ function _lerpDisplayRange(lo, hi, targetLo, targetHi, dtSec, tau) {
 function _currentMeasureAt(beats, t) {
     if (!beats || !beats.length) return null;
     let measure = null;
-    for (let i = 0; i < beats.length; i++) {
-        if (beats[i].time > t) break;
-        measure = beats[i].measure;
+    for (const beat of beats) {
+        if (beat.time > t) break;
+        measure = beat.measure;
     }
     return measure;
 }
