@@ -101,9 +101,18 @@ function _alignedTargetRange(rawLo, rawHi) {
 // because no measure boundary has been crossed since the last shift, or
 // because the player currently has a note held down? Pure so the gate
 // logic is unit-testable on its own.
+//
+// Both restrictions require boundary data to be available at all —
+// currentMeasure === null means the chart carries no beats/measure data
+// (GP imports, legacy sloppak), and per issue #32 that falls through to
+// unrestricted retargeting same as practiceMode=on, holding a note down
+// included. There's no measure to gate "crossed a boundary" against in
+// that case, and gating the held-note check independently of it would
+// silently reintroduce mid-phrase freezes on exactly the charts this
+// setting is documented to leave unaffected.
 function _shouldHoldTargetForPractice(practiceMode, targetLo, currentMeasure, lastShiftMeasure, heldCount) {
-    if (practiceMode || targetLo === null) return false;
-    return (currentMeasure !== null && currentMeasure === lastShiftMeasure) || heldCount > 0;
+    if (practiceMode || targetLo === null || currentMeasure === null) return false;
+    return currentMeasure === lastShiftMeasure || heldCount > 0;
 }
 
 // ── Persisted settings ───────────────────────────────────────────────
