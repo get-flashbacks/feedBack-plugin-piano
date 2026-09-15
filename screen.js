@@ -1599,12 +1599,17 @@ function createFactory() {
             // Current target still comfortably covers raw — keep it as-is
             // (the ease below keeps converging toward it regardless).
         } else if (_shouldHoldTargetForPractice(
-            _cfg.practiceMode, _targetLo, currentMeasure, _lastShiftMeasure, _heldNotes.size)) {
+            _cfg.practiceMode, _targetLo, currentMeasure, _lastShiftMeasure, _rawToPlayed.size)) {
             // "Performance" mode (issue #32): a re-target is due, but we're
             // either still inside the measure the last shift happened in
             // (no boundary crossed since), or the player currently has a
-            // note held down — hold the existing target rather than
-            // shifting mid-phrase / out from under a held note. The ease
+            // key physically pressed — hold the existing target rather
+            // than shifting mid-phrase / out from under a held note.
+            // Gated on _rawToPlayed (raw MIDI keys currently down), not
+            // _heldNotes — a sustained note stays in _heldNotes after the
+            // physical key is released (see _handleNoteOff), so gating on
+            // _heldNotes would keep freezing retargets for the rest of the
+            // sustain pedal hold even with no key actually down. The ease
             // below keeps converging toward whatever target is already
             // set. `currentMeasure === null` (no boundary data) falls
             // through to the free-retarget branch below, as documented.
