@@ -1101,6 +1101,116 @@ test('practiceMode=on: display range retargets freely even without a measure bou
         'practiceMode should retarget freely regardless of measure-boundary data, matching pre-#32 behavior');
 });
 
+test('practiceMode=off: retargeting is suppressed while a note is physically held, even across a measure boundary', () => {
+    // Regression coverage for the held-note half of issue #32's gate,
+    // requested on PR #36's review. `_handleNoteOn`/`_handleNoteOff` are
+    // exposed directly on the renderer instance (see the "Internal hooks
+    // used by module-level MIDI router" comment near createFactory's
+    // return), so this drives the real note-on/off bookkeeping without
+    // needing a Web MIDI mock.
+    const { harness, renderer } = initRendererWithHarness({
+        storage: { piano_auto_tone: 'false', piano_note_names: 'false' },
+    });
+    const overlay = harness.doc.elementsById.player.children
+        .find(el => el.className === 'piano-highway-canvas');
+    const ctx = overlay.getContext('2d');
+    const lastWhiteKeyLabel = () => {
+        const first = ctx.fillTextCalls.find(call => /^[A-G]$|^C-?\d+$/.test(call.text));
+        return first && first.text;
+    };
+
+    renderer.draw({
+        isReady: true,
+        currentTime: 0,
+        beats: [{ time: 0, measure: 1 }],
+        notes: [{ t: 0, s: 1, f: 0, sus: 0.2 }], // s=1,f=0 -> midi 24
+        chords: [],
+    });
+
+    renderer._handleNoteOn(60, 100); // a key is physically held down
+
+    const highBundle = {
+        isReady: true,
+        currentTime: 10,
+        beats: [{ time: 0, measure: 1 }, { time: 4, measure: 2 }], // boundary crossed
+        notes: [
+            { t: 10, s: 1, f: 6, sus: 0.2 },
+            { t: 10, s: 2, f: 12, sus: 0.2 },
+        ],
+        chords: [],
+    };
+    for (let i = 0; i < 20; i++) {
+        advanceClock(harness, 150);
+        ctx.fillTextCalls.length = 0;
+        renderer.draw(highBundle);
+    }
+    assert.equal(lastWhiteKeyLabel(), 'C-1',
+        'display range should stay frozen at [0,47] while a note is held, despite the crossed measure boundary');
+
+    renderer._handleNoteOff(60); // release the held key
+
+    for (let i = 0; i < 20; i++) {
+        advanceClock(harness, 150);
+        ctx.fillTextCalls.length = 0;
+        renderer.draw(highBundle);
+    }
+    assert.equal(lastWhiteKeyLabel(), 'C1',
+        'releasing the held key should let the already-crossed measure boundary retarget the display range');
+
+    renderer.destroy();
+});
+
+test('practiceMode=off: releasing a held key while sustain is active still allows retargeting', () => {
+    // Regression coverage for the CodeRabbit-flagged bug this PR fixed:
+    // the freeze gate must key off _rawToPlayed (physically-pressed keys),
+    // not _heldNotes — a sustained note stays in _heldNotes after the
+    // physical key is released (see _handleNoteOff), so gating on
+    // _heldNotes would keep freezing retargets for the rest of the
+    // sustain hold even with no key actually down.
+    const { harness, renderer } = initRendererWithHarness({
+        storage: { piano_auto_tone: 'false', piano_note_names: 'false' },
+    });
+    const overlay = harness.doc.elementsById.player.children
+        .find(el => el.className === 'piano-highway-canvas');
+    const ctx = overlay.getContext('2d');
+    const lastWhiteKeyLabel = () => {
+        const first = ctx.fillTextCalls.find(call => /^[A-G]$|^C-?\d+$/.test(call.text));
+        return first && first.text;
+    };
+
+    renderer.draw({
+        isReady: true,
+        currentTime: 0,
+        beats: [{ time: 0, measure: 1 }, { time: 4, measure: 2 }], // boundary already available
+        notes: [{ t: 0, s: 1, f: 0, sus: 0.2 }], // s=1,f=0 -> midi 24
+        chords: [],
+    });
+
+    renderer._handleSustain(true);   // sustain pedal down
+    renderer._handleNoteOn(60, 100); // key pressed
+    renderer._handleNoteOff(60);     // key released while sustain is held — note lingers in _heldNotes
+
+    const highBundle = {
+        isReady: true,
+        currentTime: 10,
+        beats: [{ time: 0, measure: 1 }, { time: 4, measure: 2 }], // boundary crossed
+        notes: [
+            { t: 10, s: 1, f: 6, sus: 0.2 },
+            { t: 10, s: 2, f: 12, sus: 0.2 },
+        ],
+        chords: [],
+    };
+    for (let i = 0; i < 20; i++) {
+        advanceClock(harness, 150);
+        ctx.fillTextCalls.length = 0;
+        renderer.draw(highBundle);
+    }
+    assert.equal(lastWhiteKeyLabel(), 'C1',
+        'a sustained-but-released note should not block retargeting once a measure boundary has been crossed');
+
+    renderer.destroy();
+});
+
 test('renderer skips chord-name labels once "Show note names" is turned off', () => {
     const { harness, renderer } = initRendererWithHarness({
         storage: { piano_auto_tone: 'false', piano_note_names: 'false' },
