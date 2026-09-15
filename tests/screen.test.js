@@ -234,6 +234,89 @@ function freshPlugin(options = {}) {
 
 const mod = freshPlugin();
 
+// Test-only pins stand in for reviewed artifacts. They are never added to
+// the shipped allowlist; this DOM harness does not fetch or execute scripts.
+function scriptLoaderFixture(pins) {
+    const { doc } = installBrowserHarness();
+    const fs = require('node:fs');
+    const vm = require('node:vm');
+    const source = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+    const declaration = 'const WAF_SCRIPT_INTEGRITY = Object.freeze({});';
+    assert.ok(source.includes(declaration));
+    const sandbox = { window: global.window, document: doc,
+        localStorage: global.localStorage, console, module: { exports: {} } };
+    vm.runInNewContext(source.replace(declaration,
+        `const WAF_SCRIPT_INTEGRITY = Object.freeze(${JSON.stringify(pins)});`), sandbox);
+    return { doc, load: sandbox.module.exports._loadScript };
+}
+
+const playerUrl = 'https://surikov.github.io/webaudiofont/npm/dist/WebAudioFontPlayer.js';
+const fixtureIntegrity = 'sha384-' + require('node:crypto')
+    .createHash('sha384').update('test fixture only').digest('base64');
+
+test('shipped loader blocks player and all GM preset scripts without creating DOM nodes', async () => {
+    const plugin = freshPlugin();
+    // Existing elements must not bypass pin validation.
+    global.document.querySelector = () => ({ src: playerUrl });
+    await assert.rejects(plugin._loadScript(playerUrl), /no verified integrity pin/);
+    for (let gm = 0; gm < 128; gm++) {
+        await assert.rejects(plugin._loadScript(plugin._wafUrl(gm)), /no verified integrity pin/);
+    }
+    assert.equal(global.document.head.children.length, 0);
+});
+
+test('loader requires exact own URL pins and valid SHA-384 metadata', async () => {
+    for (const pin of ['', 'sha384-invalid', 'sha256-' + 'A'.repeat(64)]) {
+        const { doc, load } = scriptLoaderFixture({ [playerUrl]: pin });
+        await assert.rejects(load(playerUrl), /no verified integrity pin/);
+        assert.equal(doc.head.children.length, 0);
+    }
+    const { doc, load } = scriptLoaderFixture({ [playerUrl]: fixtureIntegrity });
+    for (const url of [playerUrl + '?changed', 'https://example.invalid/player.js', 'toString', '__proto__']) {
+        await assert.rejects(load(url), /no verified integrity pin/);
+    }
+    assert.equal(doc.head.children.length, 0);
+});
+
+test('pinned loads set SRI and CORS before insertion and share completion', async () => {
+    const { doc, load } = scriptLoaderFixture({ [playerUrl]: fixtureIntegrity });
+    doc.querySelector = () => ({ src: playerUrl });
+    const append = doc.head.appendChild.bind(doc.head);
+    doc.head.appendChild = script => {
+        assert.equal(script.integrity, fixtureIntegrity);
+        assert.equal(script.crossOrigin, 'anonymous');
+        assert.equal(script.src, playerUrl);
+        return append(script);
+    };
+    let completed = false;
+    const first = load(playerUrl);
+    first.then(() => { completed = true; });
+    assert.equal(load(playerUrl), first);
+    await Promise.resolve();
+    assert.equal(completed, false);
+    assert.equal(doc.head.children.length, 1);
+    doc.head.children[0].onload();
+    await first;
+    assert.equal(completed, true);
+    assert.equal(load(playerUrl), first);
+});
+
+test('failed verification rejects all waiters, removes the script, and allows a pinned retry', async () => {
+    const { doc, load } = scriptLoaderFixture({ [playerUrl]: fixtureIntegrity });
+    const first = load(playerUrl);
+    const second = load(playerUrl);
+    const rejected = assert.rejects(first, /Failed to load or verify/);
+    const alsoRejected = assert.rejects(second, /Failed to load or verify/);
+    doc.head.children[0].onerror();
+    await Promise.all([rejected, alsoRejected]);
+    assert.equal(doc.head.children.length, 0);
+    const retry = load(playerUrl);
+    assert.notEqual(retry, first);
+    assert.equal(doc.head.children[0].integrity, fixtureIntegrity);
+    doc.head.children[0].onload();
+    await retry;
+});
+
 test('noteToMidi maps string/fret to a MIDI number (24 semitones per string)', () => {
     assert.equal(mod.noteToMidi(0, 0), 0);
     assert.equal(mod.noteToMidi(1, 5), 29);

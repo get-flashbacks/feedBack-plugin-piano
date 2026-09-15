@@ -433,6 +433,13 @@ const WAF_BASE = 'https://surikov.github.io/webaudiofontdata/sound/';
 const WAF_PLAYER_URL = 'https://surikov.github.io/webaudiofont/npm/dist/WebAudioFontPlayer.js';
 const WAF_SF = 'JCLive_sf2_file';
 
+// Exact URL -> reviewed SHA-384 SRI digest. No trusted script bytes or
+// digests are bundled yet, so remote synthesis is blocked by default.
+// Populate only from independently verified artifacts, never at runtime
+// from the same remote server. Presets are executable scripts too.
+const WAF_SCRIPT_INTEGRITY = Object.freeze({});
+const _scriptLoads = new Map();
+
 const INSTRUMENTS = [
     { name: 'Grand Piano',    gm: 0  },
     { name: 'Electric Piano',  gm: 4  },
@@ -516,14 +523,33 @@ function _activeToneNameAt(toneChanges, toneBase, t) {
 }
 
 function _loadScript(url) {
-    return new Promise((resolve, reject) => {
-        if (document.querySelector(`script[src="${url}"]`)) { resolve(); return; }
+    const integrity = Object.hasOwn(WAF_SCRIPT_INTEGRITY, url)
+        ? WAF_SCRIPT_INTEGRITY[url] : null;
+    if (typeof integrity !== 'string' || !/^sha384-[A-Za-z0-9+/]{64}$/.test(integrity)) {
+        return Promise.reject(new Error('WebAudioFont script blocked: no verified integrity pin for ' + url));
+    }
+    if (_scriptLoads.has(url)) return _scriptLoads.get(url);
+    const pending = new Promise((resolve, reject) => {
         const s = document.createElement('script');
+        s.integrity = integrity;
+        s.crossOrigin = 'anonymous';
         s.src = url;
-        s.onload = resolve;
-        s.onerror = () => reject(new Error('Failed to load ' + url));
+        s.onload = () => {
+            s.onload = s.onerror = null;
+            resolve();
+        };
+        s.onerror = () => {
+            s.onload = s.onerror = null;
+            s.remove();
+            reject(new Error('Failed to load or verify ' + url));
+        };
         document.head.appendChild(s);
+    }).catch(error => {
+        _scriptLoads.delete(url);
+        throw error;
     });
+    _scriptLoads.set(url, pending);
+    return pending;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -566,9 +592,9 @@ async function _synthLoadInstrumentByGm(gm, label) {
     const varName = _wafVar(gm);
 
     try {
-        if (!window[varName]) {
-            await _loadScript(_wafUrl(gm));
-        }
+        // Only reuse scripts verified by our loader, not arbitrary globals
+        // or script elements another component may have installed.
+        await _loadScript(_wafUrl(gm));
         // A newer call to this function started (and possibly already
         // finished) while this one's script fetch was in flight -- that
         // request's outcome, not this stale one's, must win.
@@ -3025,6 +3051,7 @@ if (typeof module !== 'undefined' && module.exports) {
         _gmForToneName, _activeToneNameAt, _keyboardGlowBlur,
         _lerpDisplayRange, _activeChordLabels, _currentMeasureAt,
         _alignedTargetRange, _shouldHoldTargetForPractice,
+        _loadScript,
         matchesArrangement: createFactory.matchesArrangement,
         _createFactory: createFactory,
     };

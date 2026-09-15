@@ -13,7 +13,7 @@ A plugin for [Slopsmith](https://github.com/got-feedback/feedback) that replaces
 - **Auto-activate** — switches on automatically for Keys/Piano/Synth arrangements
 - **MIDI keyboard input** — connect any USB MIDI keyboard via Web MIDI API to play along
 - **Hit/miss feedback** — keys glow green for correct notes, blue for freestyle, red for wrong notes
-- **Built-in synthesizer** — WebAudioFont-powered playback with 10 GM instruments (Grand Piano, Electric Piano, Organ, Strings, Synth, and more)
+- **Built-in synthesizer (currently unavailable)** — WebAudioFont playback is blocked until verified script integrity pins are bundled (see below).
 - **Accuracy scoring** — optional hit detection with accuracy %, streak counter, and best streak tracking
 - **Sustain pedal** — full MIDI CC#64 sustain pedal support
 - **Inline settings** — MIDI device, instrument, volume, channel, transpose, and toggles all accessible from the player
@@ -50,7 +50,20 @@ Connect a USB MIDI keyboard and select it from the settings panel. Play along an
 
 ### Instruments
 
-Select from 10 General MIDI sounds via the settings panel:
+Synthesized sound is currently unavailable: this checkout does not bundle
+trusted WebAudioFont scripts or verified integrity hashes. The loader refuses
+all unpinned scripts before making a request. The piano display, MIDI input,
+and scoring remain available; sound selections have no audible effect.
+
+To restore synthesis, maintainers must verify the player and each supported
+instrument script independently, then add their exact URLs and SHA-384 SRI
+digests to `WAF_SCRIPT_INTEGRITY` in `screen.js`. Prefer immutable, versioned
+URLs. The browser must accept anonymous CORS and verify the digest before
+execution. Missing pins, mismatches, and load failures have no unverified
+fallback. Auto-tone instruments need their own pins too. Do not generate
+trusted hashes dynamically from a runtime download.
+
+The settings panel lists these 10 General MIDI sounds:
 
 | Sound | GM Program |
 |-------|-----------|
