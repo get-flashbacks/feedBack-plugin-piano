@@ -83,6 +83,29 @@ function _currentMeasureAt(beats, t) {
     return measure;
 }
 
+// Expands a raw visible-note [lo,hi] into an octave-aligned target range
+// with 2-semitone padding and a 47-semitone minimum span. Pure so it's
+// unit-testable independent of the per-instance easing state.
+function _alignedTargetRange(rawLo, rawHi) {
+    let lo = Math.max(0, rawLo - 2);
+    let hi = Math.min(127, rawHi + 2);
+    lo = Math.floor(lo / 12) * 12;
+    hi = Math.ceil((hi + 1) / 12) * 12 - 1;
+    while (hi - lo < 47) {
+        if (lo > 0) lo -= 12; else hi = Math.min(127, hi + 12);
+    }
+    return { lo, hi };
+}
+
+// practiceMode=off gate (issue #32): should a due re-target be held back
+// because no measure boundary has been crossed since the last shift, or
+// because the player currently has a note held down? Pure so the gate
+// logic is unit-testable on its own.
+function _shouldHoldTargetForPractice(practiceMode, targetLo, currentMeasure, lastShiftMeasure, heldCount) {
+    if (practiceMode || targetLo === null) return false;
+    return (currentMeasure !== null && currentMeasure === lastShiftMeasure) || heldCount > 0;
+}
+
 // ── Persisted settings ───────────────────────────────────────────────
 
 const STORE_KEYS = {
@@ -1569,8 +1592,8 @@ function createFactory() {
                    raw.lo - _targetLo < 12 && _targetHi - raw.hi < 12) {
             // Current target still comfortably covers raw — keep it as-is
             // (the ease below keeps converging toward it regardless).
-        } else if (!_cfg.practiceMode && _targetLo !== null &&
-                   ((currentMeasure !== null && currentMeasure === _lastShiftMeasure) || _heldNotes.size > 0)) {
+        } else if (_shouldHoldTargetForPractice(
+            _cfg.practiceMode, _targetLo, currentMeasure, _lastShiftMeasure, _heldNotes.size)) {
             // "Performance" mode (issue #32): a re-target is due, but we're
             // either still inside the measure the last shift happened in
             // (no boundary crossed since), or the player currently has a
@@ -1580,15 +1603,9 @@ function createFactory() {
             // set. `currentMeasure === null` (no boundary data) falls
             // through to the free-retarget branch below, as documented.
         } else {
-            let lo = Math.max(0, raw.lo - 2);
-            let hi = Math.min(127, raw.hi + 2);
-            lo = Math.floor(lo / 12) * 12;
-            hi = Math.ceil((hi + 1) / 12) * 12 - 1;
-            while (hi - lo < 47) {
-                if (lo > 0) lo -= 12; else hi = Math.min(127, hi + 12);
-            }
-            _targetLo = lo;
-            _targetHi = hi;
+            const aligned = _alignedTargetRange(raw.lo, raw.hi);
+            _targetLo = aligned.lo;
+            _targetHi = aligned.hi;
             _lastShiftMeasure = currentMeasure;
         }
 
@@ -2978,6 +2995,7 @@ if (typeof module !== 'undefined' && module.exports) {
         _controllerRangeOverlayBounds,
         _gmForToneName, _activeToneNameAt, _keyboardGlowBlur,
         _lerpDisplayRange, _activeChordLabels, _currentMeasureAt,
+        _alignedTargetRange, _shouldHoldTargetForPractice,
         matchesArrangement: createFactory.matchesArrangement,
         _createFactory: createFactory,
     };

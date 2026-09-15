@@ -1005,6 +1005,26 @@ test('_currentMeasureAt resolves the measure of the latest beat at or before t',
     assert.equal(mod._currentMeasureAt(beats, 100), 3);
 });
 
+test('_alignedTargetRange expands raw notes to an octave-aligned, padded, min-47-span target', () => {
+    assert.deepEqual(mod._alignedTargetRange(24, 24), { lo: 0, hi: 47 });
+    assert.deepEqual(mod._alignedTargetRange(30, 60), { lo: 24, hi: 71 });
+});
+
+test('_shouldHoldTargetForPractice holds only when practiceMode is off, a target exists, and (same measure or a note is held)', () => {
+    // practiceMode on: never hold, regardless of everything else.
+    assert.equal(mod._shouldHoldTargetForPractice(true, 24, 1, 1, 0), false);
+    // No target yet: nothing to hold.
+    assert.equal(mod._shouldHoldTargetForPractice(false, null, 1, 1, 0), false);
+    // Same measure as last shift, no held notes: hold.
+    assert.equal(mod._shouldHoldTargetForPractice(false, 24, 2, 2, 0), true);
+    // Different measure, no held notes: don't hold.
+    assert.equal(mod._shouldHoldTargetForPractice(false, 24, 3, 2, 0), false);
+    // Different measure, but a note is held: hold anyway.
+    assert.equal(mod._shouldHoldTargetForPractice(false, 24, 3, 2, 1), true);
+    // No boundary data (currentMeasure null), no held notes: don't hold.
+    assert.equal(mod._shouldHoldTargetForPractice(false, 24, null, 2, 0), false);
+});
+
 test('practiceMode=off (default): display range does not retarget within the same measure', () => {
     // Regression coverage for issue #32's boundary gate. Same convergence
     // scenario as the eased-retarget test above, but this time `beats`
