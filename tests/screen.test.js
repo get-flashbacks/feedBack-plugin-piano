@@ -1613,3 +1613,113 @@ test('destroy and defensive re-init cancel pending init animation frames', () =>
     renderer.destroy();
     assert.equal(harness.rafs.size, 0);
 });
+
+// feedBack#849 / splitscreen#66: the hand filter is a declared per-instance
+// setting, so two renderers (two splitscreen panels) can filter differently.
+test('applySetting(handFilter) is per renderer instance and falls back to the global', () => {
+    // A non-default global, so "no override" and "override equals the
+    // manifest default" are distinguishable.
+    const rMod = freshPlugin({ storage: { piano_hand_filter: 'R' } });
+    const a = rMod._createFactory();
+    const b = rMod._createFactory();
+    assert.equal(a.getSetting('handFilter'), 'R', 'no override follows the global');
+    a.applySetting('handFilter', 'L');
+    assert.equal(a.getSetting('handFilter'), 'L');
+    assert.equal(b.getSetting('handFilter'), 'R', 'a sibling instance keeps following the global');
+    a.applySetting('handFilter', 'bogus');
+    assert.equal(a.getSetting('handFilter'), 'R', 'an unknown value clears the override');
+    assert.equal(a.getSetting('unknownKey'), undefined);
+    assert.doesNotThrow(() => a.applySetting('unknownKey', 1));
+});
+
+test('a per-instance hand override changes what the instance scores', () => {
+    // Global says LH; this instance is overridden to RH. Scoring must follow
+    // the override, which fails if any hit-check site still reads the global.
+    const { harness, renderer } = initRendererWithHarness({
+        storage: { piano_hand_filter: 'L', piano_hit_detect: 'true', piano_auto_tone: 'false' },
+    });
+    renderer.applySetting('handFilter', 'R');
+    const overlay = harness.doc.elementsById.player.children
+        .find(el => el.className === 'piano-highway-canvas');
+    const ctx = overlay.getContext('2d');
+    const bundle = {
+        isReady: true, currentTime: 1, beats: [],
+        notes: [{ t: 1, s: 2, f: 12, hand: 'L' }],             // C4, left hand
+        chords: [{ t: 1, notes: [{ s: 2, f: 16, hand: 'R' }] }], // E4, right hand
+    };
+    const latestHud = () => ctx.fillTextCalls
+        .map(call => call.text)
+        .findLast(text => String(text).startsWith('Accuracy:'));
+
+    renderer.draw(bundle);
+    renderer._handleNoteOn(64, 100);
+    renderer.draw(bundle);
+    assert.match(latestHud(), /Accuracy: 100%.*1\/1$/, 'right-hand note scores under the RH override');
+
+    renderer._handleNoteOn(60, 100);
+    renderer.draw(bundle);
+    assert.match(latestHud(), /Accuracy: 50%.*1\/2$/, 'left-hand note is filtered despite the LH global');
+
+    renderer.destroy();
+});
+
+test('changing the effective hand filter resets scoring, but re-applying the same value does not', () => {
+    // Two notes at different times so each can be hit independently and the
+    // running hit COUNT (not just the HUD's latest line, which the
+    // >0-total gate can hide once scoring is reset) tells reset from no-reset.
+    const { harness, renderer } = initRendererWithHarness({
+        storage: { piano_hand_filter: 'both', piano_hit_detect: 'true', piano_auto_tone: 'false' },
+    });
+    const overlay = harness.doc.elementsById.player.children
+        .find(el => el.className === 'piano-highway-canvas');
+    const ctx = overlay.getContext('2d');
+    const bundleAt = (t) => ({
+        isReady: true, currentTime: t, beats: [],
+        notes: [{ t: 1, s: 2, f: 12, hand: 'L' }, { t: 2, s: 2, f: 12, hand: 'L' }],
+        chords: [],
+    });
+    const latestHud = () => ctx.fillTextCalls
+        .map(call => call.text)
+        .findLast(text => String(text).startsWith('Accuracy:'));
+
+    renderer.applySetting('handFilter', 'L');
+    renderer.draw(bundleAt(1));
+    renderer._handleNoteOn(60, 100); // hits the t=1 note under LH
+    renderer.draw(bundleAt(1));
+    assert.match(latestHud(), /Accuracy: 100%.*1\/1$/);
+
+    // Re-applying the SAME effective value must not wipe an in-progress run
+    // (a host restoring a saved setting on every provider refresh does
+    // exactly this).
+    renderer.applySetting('handFilter', 'L');
+    renderer.draw(bundleAt(2));
+    renderer._handleNoteOn(60, 100); // hits the t=2 note
+    renderer.draw(bundleAt(2));
+    assert.match(latestHud(), /Accuracy: 100%.*2\/2$/, 'unchanged effective filter must not reset scoring');
+
+    // Switching hands mid-song must drop the stale hits — they belong to
+    // notes that no longer exist under the new filter (both notes are LH,
+    // so under R none are even playable; the count starting back at 1
+    // instead of 3 is what proves the reset happened).
+    renderer.applySetting('handFilter', 'R');
+    renderer.draw(bundleAt(1));
+    renderer._handleNoteOn(60, 100); // no LH-filtered note to hit -> a miss
+    renderer.draw(bundleAt(1));
+    assert.match(latestHud(), /Accuracy: 0%.*0\/1$/, 'changed effective filter must reset scoring');
+
+    renderer.destroy();
+});
+
+test('_approachAlpha honours an explicit per-instance hand filter', () => {
+    const lh = [{ t: 1, s: 0, f: 0, hand: 'L' }];
+    assert.ok(mod._approachAlpha(0, lh, null, 0.9, 'both') > 0);
+    assert.equal(mod._approachAlpha(0, lh, null, 0.9, 'R'), 0);
+});
+
+test('plugin.json declares the handFilter visualization setting', () => {
+    const manifest = require('../plugin.json');
+    const settings = manifest.capabilities.visualization.settings;
+    const hand = settings.find(s => s.key === 'handFilter');
+    assert.equal(hand.type, 'select');
+    assert.deepEqual(hand.options.map(o => o.id), ['both', 'L', 'R']);
+});

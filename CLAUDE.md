@@ -54,6 +54,17 @@ each splitscreen panel gets its own board.
   wire notes — this plugin decodes `midi = s*24 + f` from guitar-wire notes
   and would render a blank board on a notation-only chart.
 
+- `applySetting(key, value)` / `getSetting(key)` — the per-instance settings
+  contract (feedBack#849). `plugin.json` declares `handFilter` (a `select`,
+  ids `both` / `L` / `R`) under `capabilities.visualization.settings`, and
+  each instance keeps its own `_handOverride` (null = follow the global
+  `_cfg.handFilter`). Every per-instance read goes through `_handFilter()`;
+  the in-canvas Settings panel still edits the global. `getSetting` returns
+  the *effective* value, so a host must only re-apply values it actually
+  saved — re-applying `getSetting()`'s answer would pin an override equal to
+  the global (splitscreen re-applies saved values only, as of
+  feedBack-plugin-splitscreen#68). An unknown value clears the override.
+
 **Both globals are exported** — `window.slopsmithViz_piano` (legacy name)
 and `window.feedBackViz_piano = window.slopsmithViz_piano` (the
 slopsmith→feedBack rename core's `vizFactory()` resolution walks). Keep

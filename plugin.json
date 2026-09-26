@@ -1,7 +1,7 @@
 {
   "id": "piano",
   "name": "Piano Highway",
-  "version": "4.4.0",
+  "version": "4.5.0",
   "type": "visualization",
   "private": false,
   "script": "screen.js",
@@ -10,6 +10,39 @@
     "plugin-runtime-idempotent.v1"
   ],
   "capabilities": {
+    "visualization": {
+      "roles": [
+        "provider"
+      ],
+      "operations": [
+        "renderer.create",
+        "renderer.destroy"
+      ],
+      "mode": "active",
+      "safety": "safe",
+      "settings": [
+        {
+          "key": "handFilter",
+          "label": "Hands",
+          "type": "select",
+          "default": "both",
+          "options": [
+            {
+              "id": "both",
+              "label": "Both"
+            },
+            {
+              "id": "L",
+              "label": "LH"
+            },
+            {
+              "id": "R",
+              "label": "RH"
+            }
+          ]
+        }
+      ]
+    },
     "midi-input": {
       "roles": [
         "requester"
