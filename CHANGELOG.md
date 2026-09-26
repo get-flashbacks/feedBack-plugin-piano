@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Per-instance hand filter (feedback-plugin-splitscreen#66): `plugin.json` declares a `handFilter` select (Both / LH / RH) under `capabilities.visualization.settings`, and each renderer instance implements `applySetting` / `getSetting`. Splitscreen's per-panel "Viz ⚙" popover can now show a different hand in each panel. Without an override, an instance follows the global Settings value as before.
+
 ### Documentation
 
 - Add `CLAUDE.md` (issue #3): documents the `setRenderer` viz-renderer contract implementation and the `window.slopsmithSplitscreen` focus-change integration, since this plugin is the ecosystem's reference example for both.

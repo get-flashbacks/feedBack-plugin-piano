@@ -154,6 +154,8 @@ function _readIntOrNull(key) {
     return Number.isFinite(n) ? n : null;
 }
 
+const HAND_FILTER_VALUES = ['both', 'L', 'R'];
+
 const _cfg = {
     midiInputId:   _readStore(STORE_KEYS.midiInputId) || '',
     instrumentIdx: parseInt(_readStore(STORE_KEYS.instrumentIdx) || '0'),
@@ -1101,12 +1103,12 @@ function _visibleMidiRange(notes, chords, t) {
     return lo <= hi ? { lo, hi } : null;
 }
 
-function _approachAlpha(midi, notes, chords, t) {
+function _approachAlpha(midi, notes, chords, t, handFilter = _cfg.handFilter) {
     const lookAhead = VISIBLE_SECONDS * 0.6;
     let closest = Infinity;
     if (notes) {
         for (const n of notes) {
-            if (!_notePassesHandFilter(n.hand, _cfg.handFilter)) continue;
+            if (!_notePassesHandFilter(n.hand, handFilter)) continue;
             if (n.t < t - 0.05) continue;
             if (n.t > t + lookAhead) break;
             if (noteToMidi(n.s, n.f) === midi) {
@@ -1119,7 +1121,7 @@ function _approachAlpha(midi, notes, chords, t) {
             if (c.t < t - 0.05) continue;
             if (c.t > t + lookAhead) break;
             for (const cn of (c.notes || [])) {
-                if (!_notePassesHandFilter(cn.hand, _cfg.handFilter)) continue;
+                if (!_notePassesHandFilter(cn.hand, handFilter)) continue;
                 if (noteToMidi(cn.s, cn.f) === midi) {
                     closest = Math.min(closest, c.t - t);
                 }
@@ -1183,6 +1185,12 @@ function _ssIsCanvasFocused(highwayCanvas) {
 
 function createFactory() {
     const _instanceId = ++_nextInstanceId;
+
+    // Per-instance hand filter set by a host (splitscreen's per-panel popover)
+    // via applySetting('handFilter'); null follows the global setting. Kept
+    // across init/destroy cycles so a panel's choice survives song changes.
+    let _handOverride = null;
+    function _handFilter() { return _handOverride || _cfg.handFilter; }
 
     // Lifecycle
     let _isReady = false;
@@ -1451,7 +1459,7 @@ function createFactory() {
 
         if (notes) {
             for (const n of notes) {
-                if (!_notePassesHandFilter(n.hand, _cfg.handFilter)) continue;
+                if (!_notePassesHandFilter(n.hand, _handFilter())) continue;
                 if (n.t > t + HIT_TOLERANCE + 0.5) break;
                 if (n.t < t - HIT_TOLERANCE - 0.5) continue;
                 const songMidi = noteToMidi(n.s, n.f);
@@ -1469,7 +1477,7 @@ function createFactory() {
                 if (c.t > t + HIT_TOLERANCE + 0.5) break;
                 if (c.t < t - HIT_TOLERANCE - 0.5) continue;
                 for (const cn of (c.notes || [])) {
-                    if (!_notePassesHandFilter(cn.hand, _cfg.handFilter)) continue;
+                    if (!_notePassesHandFilter(cn.hand, _handFilter())) continue;
                     const songMidi = noteToMidi(cn.s, cn.f);
                     const key = _noteKey(c.t, songMidi);
                     if (songMidi === playedMidi && Math.abs(c.t - t) <= HIT_TOLERANCE && !_hitNoteKeys.has(key)) {
@@ -1501,7 +1509,7 @@ function createFactory() {
             for (const n of notes) {
                 if (n.t > cutoff) break;
                 if (n.t < cutoff - 2) continue;
-                if (!_notePassesHandFilter(n.hand, _cfg.handFilter)) continue;
+                if (!_notePassesHandFilter(n.hand, _handFilter())) continue;
                 const songMidi = noteToMidi(n.s, n.f);
                 const key = _noteKey(n.t, songMidi);
                 if (!_hitNoteKeys.has(key) && !_missedNoteKeys.has(key) && n.t < cutoff) {
@@ -1514,7 +1522,7 @@ function createFactory() {
                 if (c.t > cutoff) break;
                 if (c.t < cutoff - 2) continue;
                 for (const cn of (c.notes || [])) {
-                    if (!_notePassesHandFilter(cn.hand, _cfg.handFilter)) continue;
+                    if (!_notePassesHandFilter(cn.hand, _handFilter())) continue;
                     const songMidi = noteToMidi(cn.s, cn.f);
                     const key = _noteKey(c.t, songMidi);
                     if (!_hitNoteKeys.has(key) && !_missedNoteKeys.has(key) && c.t < cutoff) {
@@ -2414,7 +2422,7 @@ function createFactory() {
                 const dt = n.t - t;
                 if (dt > VISIBLE_SECONDS + 1) break;
                 if (dt < -1 && (n.t + (n.sus || 0)) < t - 0.5) continue;
-                if (!_notePassesHandFilter(n.hand, _cfg.handFilter)) continue;
+                if (!_notePassesHandFilter(n.hand, _handFilter())) continue;
                 allNotes.push({ midi: noteToMidi(n.s, n.f), t: n.t, sus: n.sus || 0, accent: n.ac });
             }
         }
@@ -2424,7 +2432,7 @@ function createFactory() {
                 if (dt > VISIBLE_SECONDS + 1) break;
                 if (dt < -1) continue;
                 for (const cn of (c.notes || [])) {
-                    if (!_notePassesHandFilter(cn.hand, _cfg.handFilter)) continue;
+                    if (!_notePassesHandFilter(cn.hand, _handFilter())) continue;
                     allNotes.push({ midi: noteToMidi(cn.s, cn.f), t: c.t, sus: cn.sus || 0, accent: cn.ac });
                 }
             }
@@ -2508,7 +2516,7 @@ function createFactory() {
         // top, above the leftmost (hand-filtered, currently-sounding) note
         // of each active named chord (issue #19).
         if (_cfg.showNoteNames && chordTemplates) {
-            const activeChordLabels = _activeChordLabels(chords, chordTemplates, t, _cfg.handFilter);
+            const activeChordLabels = _activeChordLabels(chords, chordTemplates, t, _handFilter());
             if (activeChordLabels.length) {
                 const labelFontSize = 11;
                 const labelPadX = 5;
@@ -2567,7 +2575,7 @@ function createFactory() {
         const window_ = 0.06;
         if (notes) {
             for (const n of notes) {
-                if (!_notePassesHandFilter(n.hand, _cfg.handFilter)) continue;
+                if (!_notePassesHandFilter(n.hand, _handFilter())) continue;
                 if (n.t > t + window_) continue;
                 const end = n.t + (n.sus || 0);
                 if (end < t - window_) continue;
@@ -2580,7 +2588,7 @@ function createFactory() {
                 if (c.t > t + window_) continue;
                 if (c.t < t - 1) continue;
                 for (const cn of (c.notes || [])) {
-                    if (!_notePassesHandFilter(cn.hand, _cfg.handFilter)) continue;
+                    if (!_notePassesHandFilter(cn.hand, _handFilter())) continue;
                     const end = c.t + (cn.sus || 0);
                     if (c.t <= t + window_ && end >= t - window_)
                         songActiveSet.add(noteToMidi(cn.s, cn.f));
@@ -2615,7 +2623,7 @@ function createFactory() {
             // called a second time below with identical args (both gated
             // on the same `!pressed` condition), redoing the same
             // notes/chords scan for no reason.
-            const ap = pressed ? 0 : _approachAlpha(k.midi, notes, chords, t);
+            const ap = pressed ? 0 : _approachAlpha(k.midi, notes, chords, t, _handFilter());
             if (playerHeld && songActive) {
                 fr = 0; fg = 1; fb = 0.27;
             } else if (isWrong && playerHeld) {
@@ -2688,7 +2696,7 @@ function createFactory() {
             let fr = 0.1, fg = 0.1, fb = 0.12;
             // Computed at most once per key per frame — see the matching
             // comment in the white-key loop above.
-            const ap = pressed ? 0 : _approachAlpha(k.midi, notes, chords, t);
+            const ap = pressed ? 0 : _approachAlpha(k.midi, notes, chords, t, _handFilter());
             if (playerHeld && songActive) {
                 fr = 0; fg = 0.8; fb = 0.2;
             } else if (isWrong && playerHeld) {
@@ -2803,6 +2811,15 @@ function createFactory() {
 
     const instance = {
         contextType: '2d',
+        // Per-instance settings declared in plugin.json's
+        // capabilities.visualization.settings (feedBack#849).
+        applySetting(key, value) {
+            if (key !== 'handFilter') return;
+            _handOverride = HAND_FILTER_VALUES.includes(value) ? value : null;
+        },
+        getSetting(key) {
+            return key === 'handFilter' ? _handFilter() : undefined;
+        },
         init(canvas /* , bundle */) {
             // Defensive teardown if a prior init wasn't paired with
             // destroy. Remove listeners, restore canvas, release

@@ -1613,3 +1613,34 @@ test('destroy and defensive re-init cancel pending init animation frames', () =>
     renderer.destroy();
     assert.equal(harness.rafs.size, 0);
 });
+
+// feedBack#849 / splitscreen#66: the hand filter is a declared per-instance
+// setting, so two renderers (two splitscreen panels) can filter differently.
+test('applySetting(handFilter) is per renderer instance and falls back to the global', () => {
+    const a = mod._createFactory();
+    const b = mod._createFactory();
+    assert.equal(a.getSetting('handFilter'), 'both', 'no override follows the global default');
+    a.applySetting('handFilter', 'L');
+    b.applySetting('handFilter', 'R');
+    assert.equal(a.getSetting('handFilter'), 'L');
+    assert.equal(b.getSetting('handFilter'), 'R');
+    a.applySetting('handFilter', 'bogus');
+    assert.equal(a.getSetting('handFilter'), 'both', 'an unknown value clears the override');
+    assert.equal(b.getSetting('handFilter'), 'R', 'other instances are untouched');
+    assert.equal(a.getSetting('unknownKey'), undefined);
+    assert.doesNotThrow(() => a.applySetting('unknownKey', 1));
+});
+
+test('_approachAlpha honours an explicit per-instance hand filter', () => {
+    const lh = [{ t: 1, s: 0, f: 0, hand: 'L' }];
+    assert.ok(mod._approachAlpha(0, lh, null, 0.9, 'both') > 0);
+    assert.equal(mod._approachAlpha(0, lh, null, 0.9, 'R'), 0);
+});
+
+test('plugin.json declares the handFilter visualization setting', () => {
+    const manifest = require(path.join(__dirname, '..', 'plugin.json'));
+    const settings = manifest.capabilities.visualization.settings;
+    const hand = settings.find(s => s.key === 'handFilter');
+    assert.equal(hand.type, 'select');
+    assert.deepEqual(hand.options.map(o => o.id), ['both', 'L', 'R']);
+});
