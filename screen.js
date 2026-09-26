@@ -183,7 +183,7 @@ const _cfg = {
     octaveMode:    _readStore(STORE_KEYS.octaveMode) === 'cue' ? 'cue' : 'auto',
     controllerLo:  _readIntOrNull(STORE_KEYS.controllerLo),
     controllerHi:  _readIntOrNull(STORE_KEYS.controllerHi),
-    handFilter:     ['L', 'R'].includes(_readStore(STORE_KEYS.handFilter)) ? _readStore(STORE_KEYS.handFilter) : 'both',
+    handFilter:     HAND_FILTER_VALUES.includes(_readStore(STORE_KEYS.handFilter)) ? _readStore(STORE_KEYS.handFilter) : 'both',
     // Off by default ("performance" behavior, issue #32): the display
     // range may only re-target at a measure boundary, and never while a
     // note is physically held. On ("practice" behavior): re-target as
