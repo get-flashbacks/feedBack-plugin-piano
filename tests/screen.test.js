@@ -1638,7 +1638,7 @@ test('_approachAlpha honours an explicit per-instance hand filter', () => {
 });
 
 test('plugin.json declares the handFilter visualization setting', () => {
-    const manifest = require(path.join(__dirname, '..', 'plugin.json'));
+    const manifest = require('../plugin.json');
     const settings = manifest.capabilities.visualization.settings;
     const hand = settings.find(s => s.key === 'handFilter');
     assert.equal(hand.type, 'select');
