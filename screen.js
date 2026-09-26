@@ -2815,7 +2815,14 @@ function createFactory() {
         // capabilities.visualization.settings (feedBack#849).
         applySetting(key, value) {
             if (key !== 'handFilter') return;
+            const before = _handFilter();
             _handOverride = HAND_FILTER_VALUES.includes(value) ? value : null;
+            // A changed effective filter changes which notes are even in
+            // play, so stale hits/misses/note-key coloring from the old
+            // hand must not carry over. Re-applying the same effective
+            // value (a host restoring on every provider refresh) must NOT
+            // reset an in-progress run.
+            if (_handFilter() !== before) _resetScoring();
         },
         getSetting(key) {
             return key === 'handFilter' ? _handFilter() : undefined;

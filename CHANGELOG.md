@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Per-instance hand filter (feedback-plugin-splitscreen#66): `plugin.json` declares a `handFilter` select (Both / LH / RH) under `capabilities.visualization.settings`, and each renderer instance implements `applySetting` / `getSetting`. Splitscreen's per-panel "Viz ⚙" popover can now show a different hand in each panel. Without an override, an instance follows the global Settings value as before.
+- Per-instance hand filter (feedback-plugin-splitscreen#66): `plugin.json` declares a `handFilter` select (Both / LH / RH) under `capabilities.visualization.settings`, and each renderer instance implements `applySetting` / `getSetting`. Splitscreen's per-panel "Viz ⚙" popover can now show a different hand in each panel. Without an override, an instance follows the global Settings value as before. Scoring (hits/misses/streak and note-key coloring) resets whenever the effective filter actually changes, but not when the same value is re-applied.
 
 ### Documentation
 

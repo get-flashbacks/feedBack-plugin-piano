@@ -1663,6 +1663,53 @@ test('a per-instance hand override changes what the instance scores', () => {
     renderer.destroy();
 });
 
+test('changing the effective hand filter resets scoring, but re-applying the same value does not', () => {
+    // Two notes at different times so each can be hit independently and the
+    // running hit COUNT (not just the HUD's latest line, which the
+    // >0-total gate can hide once scoring is reset) tells reset from no-reset.
+    const { harness, renderer } = initRendererWithHarness({
+        storage: { piano_hand_filter: 'both', piano_hit_detect: 'true', piano_auto_tone: 'false' },
+    });
+    const overlay = harness.doc.elementsById.player.children
+        .find(el => el.className === 'piano-highway-canvas');
+    const ctx = overlay.getContext('2d');
+    const bundleAt = (t) => ({
+        isReady: true, currentTime: t, beats: [],
+        notes: [{ t: 1, s: 2, f: 12, hand: 'L' }, { t: 2, s: 2, f: 12, hand: 'L' }],
+        chords: [],
+    });
+    const latestHud = () => ctx.fillTextCalls
+        .map(call => call.text)
+        .findLast(text => String(text).startsWith('Accuracy:'));
+
+    renderer.applySetting('handFilter', 'L');
+    renderer.draw(bundleAt(1));
+    renderer._handleNoteOn(60, 100); // hits the t=1 note under LH
+    renderer.draw(bundleAt(1));
+    assert.match(latestHud(), /Accuracy: 100%.*1\/1$/);
+
+    // Re-applying the SAME effective value must not wipe an in-progress run
+    // (a host restoring a saved setting on every provider refresh does
+    // exactly this).
+    renderer.applySetting('handFilter', 'L');
+    renderer.draw(bundleAt(2));
+    renderer._handleNoteOn(60, 100); // hits the t=2 note
+    renderer.draw(bundleAt(2));
+    assert.match(latestHud(), /Accuracy: 100%.*2\/2$/, 'unchanged effective filter must not reset scoring');
+
+    // Switching hands mid-song must drop the stale hits — they belong to
+    // notes that no longer exist under the new filter (both notes are LH,
+    // so under R none are even playable; the count starting back at 1
+    // instead of 3 is what proves the reset happened).
+    renderer.applySetting('handFilter', 'R');
+    renderer.draw(bundleAt(1));
+    renderer._handleNoteOn(60, 100); // no LH-filtered note to hit -> a miss
+    renderer.draw(bundleAt(1));
+    assert.match(latestHud(), /Accuracy: 0%.*0\/1$/, 'changed effective filter must reset scoring');
+
+    renderer.destroy();
+});
+
 test('_approachAlpha honours an explicit per-instance hand filter', () => {
     const lh = [{ t: 1, s: 0, f: 0, hand: 'L' }];
     assert.ok(mod._approachAlpha(0, lh, null, 0.9, 'both') > 0);
