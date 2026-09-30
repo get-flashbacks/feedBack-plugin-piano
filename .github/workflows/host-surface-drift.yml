@@ -5,7 +5,7 @@ name: host-surface-drift
 # `setRenderer` again, or drop `ui.playerControlSlot()` and every test still
 # passes. This job closes that gap from the other side — it re-reads a live
 # core checkout for every API README.md's host surface table declares, and
-# diffs core's VERSION against the two audited refs, so the compatibility floor
+# checks both audited refs and current main, so the compatibility floor
 # in README.md degrades loudly instead of silently.
 #
 # It clones core, so it needs the network. Gating every PR on that would flake

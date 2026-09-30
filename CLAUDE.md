@@ -164,7 +164,8 @@ Those fixtures are hand-written, so they cannot notice *core* drifting: rename
 `logicalSourceKey`, move `setRenderer` again, or drop `playerControlSlot` and
 every fixture test still passes. `tools/verify-host-surface.js` closes that
 gap from the other side — it clones core, checks `VERSION` against the two
-audited refs, and greps core's `static/` for every API in the `SURFACE` table
+audited refs, and probes those refs plus current upstream `main` for every
+API in the `SURFACE` table
 (probe name + path globs + pattern per row). It needs the network, so
 `.github/workflows/host-surface-drift.yml` runs it on a schedule and on
 `workflow_dispatch`, mirroring `sri-drift.yml`.
@@ -181,8 +182,9 @@ node tools/verify-host-surface.js` to skip the clone, or `--ref <sha>` to
 audit a different ref.
 
 The renderer and MIDI input degrade independently: a host with no
-`midi-input` domain (or a non-v1 one) still renders and synthesizes;
-`_mi()` returning null is the visualization-only path, not an error state.
+`midi-input` domain (or a non-v1 one) still renders, but MIDI-driven synth
+playback and scoring are unavailable. `_mi()` returning null is the
+visualization-only path, not an error state.
 
 ## Testing
 

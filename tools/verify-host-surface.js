@@ -38,7 +38,7 @@ const AUDITED_REFS = [
 // `static/js/*.min.js` bundle third-party code that mentions plenty of the
 // words we probe for (`resize`, `notes`, `chordTemplates`), so matching into
 // them would turn a renamed core API into a false pass.
-const FIRST_PARTY = /^static\/(?!vendor\/)/;
+const FIRST_PARTY = /^(?:static\/(?!vendor\/)|lib\/)/;
 
 // Each entry: the API as README.md names it, and a probe for it. `paths` are
 // file globs under core's repo root; `pattern` is matched against file
@@ -196,7 +196,8 @@ function listFiles(repo) {
         .split('\n')
         .filter(Boolean)
         .filter((f) => f.startsWith('static/') || f.startsWith('lib/'))
-        .filter((f) => FIRST_PARTY.test(f));
+        .filter((f) => FIRST_PARTY.test(f))
+        .filter((f) => !f.endsWith('.min.js'));
 }
 
 // A probe's `paths` globs, resolved against the files core actually has. The
@@ -249,7 +250,7 @@ function main() {
     })();
     const refs = only
         ? [{ ref: only, version: null, role: 'requested via --ref' }]
-        : AUDITED_REFS;
+        : [...AUDITED_REFS, { ref: 'main', version: null, role: 'current upstream main' }];
 
     withCore((repo) => {
         let failed = process.exitCode === 1;
@@ -272,6 +273,8 @@ function main() {
                 failed = true;
             } else if (version) {
                 console.log('VERSION ' + live + ' matches the declared value');
+            } else {
+                console.log('VERSION ' + live + ' (' + role + ')');
             }
 
             const results = probeAll(repo, files);
@@ -292,8 +295,10 @@ function main() {
                 console.warn(ref + ': optional surface absent: ' + soft.map((r) => r.name).join(', '));
             }
         }
-        if (!failed) console.log('\nhost surface intact at every audited ref');
+        if (failed) process.exitCode = 1;
+        else console.log('\nhost surface intact at every checked ref');
     });
 }
 
-main();
+if (require.main === module) main();
+module.exports = { AUDITED_REFS, SURFACE, listFiles, resolvePaths, probeAll, main };
