@@ -174,7 +174,10 @@ function countNoteOns(panels, keys) {
 // chrome, re-injects the gear and restores the settings panel). `mount()`'s
 // init() only covers the first of those, so a helper call introduced in any
 // other path — a `ss.getPanels()` while laying out the overlay, say — would
-// never reach the log and the guard would pass silently.
+// never reach the log and the guard would pass silently. `destroy()` is the
+// one entry point left out here, because it tears the panel down rather than
+// exercising it; the caller destroys before reading the log so teardown is
+// covered too.
 function exercisePanelLifecycle(panel, host, split) {
     panel.renderer.draw(BUNDLE);
     panel.renderer.resize(800, 400);
@@ -587,11 +590,15 @@ test('the current 1.14.21 surface is consumed no further than the floor', async 
     midiInput.handle.emit([0x90, 62, 100]);
     assert.deepEqual(seen, { left: 0, right: 1 }, 'routing follows focus on the current surface too');
 
-    // Every lifecycle entry point that can reach the helper, before the call
-    // log is read — otherwise a post-floor call hiding in the draw, resize,
-    // settings or overlay-rebuild path would never be recorded here.
+    // Every lifecycle entry point that can reach the helper, teardown included,
+    // before the call log is read — otherwise a post-floor call hiding in the
+    // draw, resize, settings, overlay-rebuild or destroy path would never be
+    // recorded here.
     for (const panel of panels) exercisePanelLifecycle(panel, host, split);
+    for (const panel of panels) panel.renderer.destroy();
     await new Promise(resolve => setImmediate(resolve));
+    assert.equal(split.focusListenerCount(), 0,
+        'teardown reached the helper, so the reads below cover its calls too');
 
     // What makes 1.10.6 the floor: the plugin reaches for nothing at all
     // outside the six methods the floor already ships, so the current
@@ -607,8 +614,6 @@ test('the current 1.14.21 surface is consumed no further than the floor', async 
         assert.ok(SPLITSCREEN_FOCUS_API.includes(name),
             `the plugin called \`${name}\`, which the ${SPLITSCREEN_PEER_FLOOR} floor does not publish`);
     }
-
-    for (const panel of panels) panel.renderer.destroy();
 });
 
 // A partial focus surface is not one behaviour but two, and which one you get
