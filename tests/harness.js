@@ -5,8 +5,6 @@
 // canvas 2D context for screen.js to mount, draw and tear down. Suites that
 // care about a specific *host* contract (core version, MIDI domain, splitscreen
 // helper) layer the extra globals on top via `installBrowserHarness({ ... })`.
-const path = require('node:path');
-
 function createStyle() {
     return {
         cssText: '',
@@ -233,18 +231,24 @@ function advanceClock(harness, ms) {
     harness.clock.now += ms;
 }
 
+// Re-require screen.js from a clean module cache. Every suite that mounts a
+// renderer needs this: screen.js is an IIFE whose module-level singletons
+// (MIDI session, synth, live-instance registry) are shared across renderers,
+// so a cached copy would leak the previous test's host globals into the next.
+// The specifier is a literal so static analysis can see the dependency.
+function loadScreen() {
+    delete require.cache[require.resolve('../screen.js')];
+    return require('../screen.js');
+}
+
 function freshPlugin(options = {}) {
     installBrowserHarness(options);
-    const file = path.join(__dirname, '..', 'screen.js');
-    delete require.cache[require.resolve(file)];
-    return require(file);
+    return loadScreen();
 }
 
 function initRendererWithHarness(options = {}) {
     const harness = installBrowserHarness(options);
-    const file = path.join(__dirname, '..', 'screen.js');
-    delete require.cache[require.resolve(file)];
-    const plugin = require(file);
+    const plugin = loadScreen();
     const renderer = plugin._createFactory();
     const canvas = harness.doc.createElement('canvas');
     canvas.clientWidth = 640;
@@ -260,6 +264,7 @@ module.exports = {
     createDocument,
     installBrowserHarness,
     advanceClock,
+    loadScreen,
     freshPlugin,
     initRendererWithHarness,
 };

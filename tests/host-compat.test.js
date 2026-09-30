@@ -12,7 +12,7 @@
 // degrade, not crash — see the visualization-only fallback tests.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { installBrowserHarness, initRendererWithHarness } = require('./harness');
+const { installBrowserHarness, loadScreen, initRendererWithHarness } = require('./harness');
 
 // ── Core host surface fixtures ────────────────────────────────────────────
 
@@ -247,10 +247,7 @@ test('a second instance keeps the session alive; the last destroy closes it', as
     const midiInput = createMidiDomain();
     const host = createCoreHost({ midiInput });
     const harness = installBrowserHarness({ feedBack: host, slopsmith: host });
-    const path = require('node:path');
-    const file = path.join(__dirname, '..', 'screen.js');
-    delete require.cache[require.resolve(file)];
-    const plugin = require(file);
+    const plugin = loadScreen();
 
     const mountOne = () => {
         const canvas = harness.doc.createElement('canvas');
@@ -301,10 +298,7 @@ test('a non-v1 midi domain is treated as absent, not mis-consumed', () => {
 
 test('renders on a host with no event bus at all (window-event fallback)', () => {
     const harness = installBrowserHarness({ feedBack: { on() { throw new Error('no bus'); } } });
-    const path = require('node:path');
-    const file = path.join(__dirname, '..', 'screen.js');
-    delete require.cache[require.resolve(file)];
-    const plugin = require(file);
+    const plugin = loadScreen();
     const renderer = plugin._createFactory();
     const canvas = harness.doc.createElement('canvas');
     canvas.clientWidth = 640;
@@ -339,10 +333,7 @@ test('only the focused panel receives routed MIDI in split-panel mode', async ()
     const midiInput = createMidiDomain();
     const host = createCoreHost({ midiInput });
     const harness = installBrowserHarness({ feedBack: host, slopsmith: host });
-    const path = require('node:path');
-    const file = path.join(__dirname, '..', 'screen.js');
-    delete require.cache[require.resolve(file)];
-    const plugin = require(file);
+    const plugin = loadScreen();
 
     const split = createSplitscreenHelper();
     window.slopsmithSplitscreen = split;
