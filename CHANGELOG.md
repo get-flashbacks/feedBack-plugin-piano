@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Third-party WebAudioFont scripts are now loaded with Subresource Integrity (issue #12): `WebAudioFontPlayer.js` and the per-GM `JCLive_sf2_file` soundfont data are pinned with `sha384` digests and fetched with `crossorigin="anonymous"`, so a compromised `surikov.github.io` can no longer inject arbitrary JS into the plugin's page. The pin table covers the full GM 0–127 range (tone-change auto-follow can request instruments outside the dropdown). Regenerate `WAF_PLAYER_INTEGRITY` / `WAF_SOUNDFONT_INTEGRITY` in `screen.js` when intentionally bumping the WebAudioFont version — SRI mismatch fails closed and leaves the synth silent.
+
 ### Added
 
 - Per-instance hand filter (feedback-plugin-splitscreen#66): `plugin.json` declares a `handFilter` select (Both / LH / RH) under `capabilities.visualization.settings`, and each renderer instance implements `applySetting` / `getSetting`. Splitscreen's per-panel "Viz ⚙" popover can now show a different hand in each panel. Without an override, an instance follows the global Settings value as before. Scoring (hits/misses/streak and note-key coloring) resets whenever the effective filter actually changes, but not when the same value is re-applied.

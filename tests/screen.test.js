@@ -1723,3 +1723,21 @@ test('plugin.json declares the handFilter visualization setting', () => {
     assert.equal(hand.type, 'select');
     assert.deepEqual(hand.options.map(o => o.id), ['both', 'L', 'R']);
 });
+
+test('every third-party script load is pinned with a well-formed SRI hash', () => {
+    assert.match(mod.WAF_PLAYER_INTEGRITY, /^sha384-[A-Za-z0-9+/]{64}={0,2}$/);
+    // Tone-change auto-follow can request any GM program, not just the
+    // curated INSTRUMENTS list, so the pin table must cover the full range.
+    for (let gm = 0; gm <= 127; gm++) {
+        assert.match(
+            mod.WAF_SOUNDFONT_INTEGRITY[gm],
+            /^sha384-[A-Za-z0-9+/]{64}={0,2}$/,
+            'missing/invalid soundfont SRI pin for GM ' + gm
+        );
+    }
+    // The dropdown instruments are the ones users actually hit; pin them
+    // explicitly so a future table trim can't silently drop one.
+    for (const inst of mod.INSTRUMENTS) {
+        assert.ok(mod.WAF_SOUNDFONT_INTEGRITY[inst.gm], 'unpinned instrument: ' + inst.name);
+    }
+});

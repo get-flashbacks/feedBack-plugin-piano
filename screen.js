@@ -435,6 +435,159 @@ const WAF_BASE = 'https://surikov.github.io/webaudiofontdata/sound/';
 const WAF_PLAYER_URL = 'https://surikov.github.io/webaudiofont/npm/dist/WebAudioFontPlayer.js';
 const WAF_SF = 'JCLive_sf2_file';
 
+// ── Subresource Integrity pins (issue #12) ──
+//
+// Both the player script and every per-GM soundfont file are fetched from a
+// third-party GitHub Pages host. `_loadScript` therefore attaches an SRI
+// `integrity` hash so a compromised/hijacked origin can't inject arbitrary
+// JS into this plugin's page. The host serves `Access-Control-Allow-Origin: *`,
+// which the `crossorigin="anonymous"` attribute requires.
+//
+// Hashes are `sha384-<base64>` over the exact response bytes, computed with:
+//
+//   curl -sS <url> | openssl dgst -sha384 -binary | openssl base64 -A
+//
+// They're pinned to whatever upstream served when this table was generated, so
+// they must be regenerated whenever the WebAudioFont version or the upstream
+// soundfont data is intentionally bumped -- otherwise the browser refuses to
+// execute the script (SRI mismatch fails closed, and the synth stays silent).
+const WAF_PLAYER_INTEGRITY = 'sha384-u9j1bRdszX//ffJaXiy9yaP+k/fSlI9bwXtVQQ+fhplWIxNS7VYFuiWKCSGvAXii';
+
+// GM program number -> sha384 of `<WAF_BASE><gm*10>_JCLive_sf2_file.js`.
+// Covers the full 0-127 GM range because `_synthLoadInstrumentByGm` is also
+// reached by tone-change auto-follow, which can request instruments outside
+// the curated INSTRUMENTS list.
+const WAF_SOUNDFONT_INTEGRITY = {
+      0: 'sha384-6pE70nQdui5S7bHSHt5pGPpxBrHY6W3Swg9+q+hiwuy1nrNcPo/ArFqMsy0DxV8W',
+      1: 'sha384-JBCjY1epJz0wNKPSUL7lfB2gWezj9F3zNgsgMOVWKed9H1vw+IfjgQx/MhkxX9tk',
+      2: 'sha384-APDT8pNhPA6LbkJNLPfi3ziC4OB1dBSTYUG9Y3EhKdm6gkOAKpuX6kuzA2XAkbIB',
+      3: 'sha384-/WAIu8NiEXb+6C0Uce4nn5D4cq8JBqCRfdBdT0Ufnul0InuMMu4J5Nypmo2+4weq',
+      4: 'sha384-uq1qn99D3+QI/b3yMx7r+39svAoXhPvgknhT9MN/Rc0VyPGq4khocre/N3bs5Xco',
+      5: 'sha384-5Kz1lUYQbPTI10/dRuvC38YSbA/ynfSzDo2tdUFh6sh5i2XCR/Kd/l0QVchxiuDq',
+      6: 'sha384-CitAwHoM4HaY0lfTtVKBusEl3OajZhLI2N48h8KNsqQp7Jl5X5lylBP1rxMlKWuc',
+      7: 'sha384-ifghDzlbK89n1F6ja3WgPMf5Mhuaxv5CbTl5k30MuVvb/y2aMjR8bti82qnS2r7t',
+      8: 'sha384-HDfEhOSzRfIV5NNr1Ble0vIXAx9XePrK78XTf4/RyDHuheFatE8+vlbY3BPieTIA',
+      9: 'sha384-XZbCFrpkhpL6B2FgVnqpR8kEwVj5Pp7mzSIsaktbKDh1DV9XWNJ7vdWMb2BGzdn1',
+     10: 'sha384-Q52/B0Kn4YPhCgl87ySUmxWwHWp+FFXzVQcynY39jHFvqCGBO8+2HBhXSedBcjeZ',
+     11: 'sha384-XMNEJtOTOF5uuSxXEJ05eKiXxmytDUJ2rB11WUN892SmQ6adKN8I1kFHhnhgKMQ0',
+     12: 'sha384-1VQBxmheQ9RNzG7fZg2r4jY6w1xoiXDMYygLFW0FlQmOO4dokaP1mumVCfYLRziQ',
+     13: 'sha384-YaPev5DdzQLp8ELZQIIN4jZhV/kBc+zVqjnlQCr0TRu3p7Kbgqku+HUUseMJjwV6',
+     14: 'sha384-lqRMWKQIijzpA3QnWB3nP55tUbx2MzaRqfrFFq1Cp+W7DQvG7WKGChOmiz4cCqKr',
+     15: 'sha384-qxNpv09XjYe+tusMlTz5Rz1pgd9oYxnnaalJRN6RdG0X4l6KLEjfx8yneP08jRn1',
+     16: 'sha384-ntILJQTHRu1Wp4vu9Deaj4VT/y8atlVL950ZCLE153OEHj19Eq/Bam9DO5M92asH',
+     17: 'sha384-aTVszv1MZbupRJlwAGJYs7quXZacUmQwQeHo9Mu0rwN2VrN9k9heUiUoVgn91Foh',
+     18: 'sha384-48g2FkZiy5KJbbFBexdUFoxWVkJ5bY+co6ux00O4Z91cHdsVVXzOs3RiU1EnZCTB',
+     19: 'sha384-N9FsK0tzYdKFVS7WMcsifIjbNrdTlNPQJDDOSfRS/EO26Z8OAhDlJiqmvaNpi6D8',
+     20: 'sha384-4jM1cKYjoeJHNnG7cX96LzlqwR3XVEs2trKo8FwNdz5fwR1SG4pvV4qKttI4OBo2',
+     21: 'sha384-VfKuKIXCRHXxD2WuaN7Cn9TjTUPfuC67mr1vQ866p2ncc3PG+CTaievIRZEuu90R',
+     22: 'sha384-DexxNKELltGUcfvv9mZTJ9ZhYbZBHXPNtNw9nSwfd/fg5/wBrSvEdqR37R+qO08h',
+     23: 'sha384-zR0izJJ+zDWzOyDn1GqQOmNuW7sORFdxjMTjbo+5X7beE893EeVMJbOh8ury0ib5',
+     24: 'sha384-zbJ0BqMPas2XigWygonRcJLuDFSPypz1Y7wKFnCC5dSnym1kPzRLhDvFTHyBfmO6',
+     25: 'sha384-SjV2HBW42tllpcKyk5JfiKre0PcOYwW3LajG49JqZXFZxNsN36wYHKBNNI4TMMik',
+     26: 'sha384-U3zO9oCDDx9vYfU7iNHvmtIL2Pmcw4f8R1dZ1qcwWk+wv6R/m+Ti4NbFD1cVKPx4',
+     27: 'sha384-zC4W57dBweg5nQ4/6Bk779S24AqZ8asGAWfBrop3z5S8x8gEianBsTqtqAL8Fk7R',
+     28: 'sha384-MzQ9wqAuCJqIVhtmBfe92vVZMvvfsI2G3HBzY4QVSlVJyfLGXkpk+TUUA6zbWuyZ',
+     29: 'sha384-niwf/DfBlRptItrzMW+16EKk9CLXpw8Ehy+fTCF0wjLDaoxzMmtvPFhuVsLy9xns',
+     30: 'sha384-LtrvaLo1UY3jHlHFUTEvHoq/YUJBxOm2PTMdMwhFpnQLaCVxopiWvFzMZ6KIBFyJ',
+     31: 'sha384-LvGyZjqKgmFnV4STxsOktYs57xeA8HB/WbWhDCVM5nO3iswqfuCye1tBlzQq5hTm',
+     32: 'sha384-hEf59MvH+5jODik6ILWtRReBYgq+X/Aog3ACvvMc3UtzTgUNtGfof+yW8vFuO94x',
+     33: 'sha384-hHAlvywV2FyKHN14/4ptEF1Q4g6peJDhezjKdrhF2ac7mMvdOWinX4dawuMuRddX',
+     34: 'sha384-jJaWnWIgA5fFke9t7+xeK9n5NbDRlxtcSHu3F44GJiAOUXuIiis/6r6fH0GNew9O',
+     35: 'sha384-VgZWTHWQUDm4YjTNQRpjZUK2wioN1l8OPwji0CVWOh8C6WrsBEYwVbtEzy6tXzAb',
+     36: 'sha384-3u9H/V3wawJ/ns6Rhn8YM1xT8tsFWvsZs5xPYwa3aFVdCHJNtA9utjxDjJ91Ngfh',
+     37: 'sha384-yxCfc+4ew5P+JfBSjNF6UXcHfa8q9MThUNvNtVqe9orGzAMgnfutnemJo9bVqujn',
+     38: 'sha384-1EL3jzsnqon+fu21hItH4U8cghiKvQN7LQpF+pxnHOL3UpaPYqPvNU8EssOAw3jc',
+     39: 'sha384-Hx3TDHKZ72fbMK8KpzDKkelQM7ETeBYCPX6K5/XrrO60aNga0sDSsYpTPsArpYYh',
+     40: 'sha384-MLJgNlN53zZSzycGhZP6O9wxglErW4P84tgryQOS790pnOQ3VhthrlgNVOF08iPg',
+     41: 'sha384-yquZM4LS2oXMK4tBdMg1M0PLKDoWkzsIktfv8EnPp+R3sNPT4QTZkL8cnY+qDekR',
+     42: 'sha384-y7tVyLaJ9pxLkGHYhi0XzaiUPf+dvLfzJAV0V3KHM35S/m9UPN6pvf+eJ+cGcF/T',
+     43: 'sha384-553qEUxqWnNNgS8W0KQTXW01RzV+RcQBrTyDo1djkc7ZRA9S35FjRbHhnKkrPKRi',
+     44: 'sha384-E6jgjL3ezvBXdHLuk2q37bC8y17roLeeRm65eLG87TyRejDZU5mZ+ivpx/2R2DmV',
+     45: 'sha384-0qm0RFRvGh2sMxlet5V+fkn3zpE9q4M8oMi52pUtnk29e2tloQHaPMj6UboQPuhY',
+     46: 'sha384-Ebzhh8R3FpY7wK2oEpKof//NzmBrQn/9O0GlZfbXRXVMll1qN9AEQqk1tfZLBzNm',
+     47: 'sha384-MRK4FVUebT1zu+jjU4plEZET2wCneC2LsMrTnl66QdfMT2hxohqTYoOyopufD+9S',
+     48: 'sha384-vHIPmWwXKIeQrqYybk8RSodoXufECzAaugTDJbEOmo8fXIp4xZZxWQ1xWX4byM5H',
+     49: 'sha384-zZYqbm7cDkQjgEVd1QhI3YHfKG4NKjkHPxVJ3KBzu8nKtSETI2Sh6wxw717tWGk1',
+     50: 'sha384-y+BLayN1tRYLyUkCRZ1jVXvKZL0Tc8FHzK6W8mzKF98vSFJZLDHwF7NsAZinbUXo',
+     51: 'sha384-5bpJCoeLhwlCf/eomFA8mAjGZP2rVw9piTKp14kqE6AqcQTxWfrTanFPGmBMxqWa',
+     52: 'sha384-byUB1CNmJMUuLOUNNVk5uZ2AzhifkZWm6FH/4Ziks+ke22zvoLXyfh0Fawi6kGYK',
+     53: 'sha384-FZMeqJDLl8bcO8UK0aJugYaDIqgvfKHcbV5n4ixebbP0kWpCal+5UU8TqZ0KyPF2',
+     54: 'sha384-ROL+UqTZg8mErmV2+Q99D1tD5Ue4IwPEA6bA0BBSrtOPlUuWA1aHYnBmUI+cbVDX',
+     55: 'sha384-LmkYkj29gpdg1oI/k5F9Nl4YUnACuZDaHd3R9R/QzuMc8CTUJ/irh4Jn0NiyWb9L',
+     56: 'sha384-w8FTBqkr/jMPqhwFLhWuFZDhi745d6gLWNSilDVIodzQhzMYIxBzmubzB2/lAN/3',
+     57: 'sha384-dNd6ujGrQNoE6CKrGDtZWnGz5sIbto2xAMQx0YlKQMEb7MIowaaIAUHxUmUFIu2J',
+     58: 'sha384-xovg0xtfziWPN6dec3qfwsumYEBd/uVdH1JM5yI5t2ILZQdO/yTyUvDXV+I1jcFH',
+     59: 'sha384-pOShqmk9qEP+/MRYNzDB6q0airC59gpHDpFuO9NqoG8D0hRkEqDXtVOCGy5XDtWf',
+     60: 'sha384-h6Hkz2tZRPrxLJfrzDe6zvq2WmyVUtP9WTgMZ9GZ6aQTWDa00W04uqA3RaEOnSM+',
+     61: 'sha384-mGy9W++v46DKU8snYIQTJEbHG0pM4JuBdQsyJNP0EQ/z2Jehk3pRLWUWug2eXBiM',
+     62: 'sha384-askQufWw2eCZpWFJsVdg4x4VBwVjp485ADL+F0fOZTNAKhebeRWUt1Sm2gqu6cTO',
+     63: 'sha384-fSeBb7aIG/flZQIcGMonkzdpES6HvCf4pnIkflVUq6bHYZJJwGbefWm3uSdGai8X',
+     64: 'sha384-6jd8CMc2ausIQk/iwqoTSp6An3bb4NvUQw0ZFf76106ElClZFnBJWgiDGkQUqXzF',
+     65: 'sha384-xKxa1sw/CH6dSHjYoE5NS3VpO3yFDOgjvPe7B9022zXV1suw7WyJjzG0KiUsLO0u',
+     66: 'sha384-sy+JpcV8/WTno+n43FLsbdoHtIZ6kR8W9HHOIubGY32LbMwWw4d2Evzf8lNGo46O',
+     67: 'sha384-Qm4gh7OiAeVbLW/3SV2mo6yS917kKR2ypE3GxE78G3fhC2EpwXOVJ8/wkb16Jq9X',
+     68: 'sha384-mpYcCv/rG/TJF6fdnuIZ7xmPsnzFFpb7ilYQFAATMCQH88osZ2LQ6gIp6A+2XQM7',
+     69: 'sha384-DriVWhXUeL8WQQjRqPnEQpqRzCBZ3wvq3wC2UuxTfMq2t/XcJGG8m2cD8ix5e/9M',
+     70: 'sha384-FaOrkZsR0Tbt0R/wu4GyDghQOXkDQLQoIawSqVeGalvOwcgJDdIbJtiWxWQfZYKN',
+     71: 'sha384-ypPpDWvRcOzbluptf41Y66TSfyrxhLJOchU6wvHDdGHaUSMgm1BYGg3ceMOaeTyj',
+     72: 'sha384-ffef0WD7O5FSKSSOlKlh0cSxiTOYOiuvRm1L0pXpXOEzT5NTj5PnDirIbzFg9P6T',
+     73: 'sha384-xxlbjonRsNvz1s+JKhopAjSElUQdnAF1v5DaFwUVhw6lW/Sya8+dFw+VhZ46V3HD',
+     74: 'sha384-Z4aBW1wy0SvokDM5nc7mD0b6l6V7JU3Scagd6+pqlOKDZ+HB623Vv/R+c0IzLJOy',
+     75: 'sha384-d1UxfuBeE+c7xHFJy0PctD4jqMpG4U3Nvq9xAGy6K5HhwzminZDAuHSfX3zgMJRa',
+     76: 'sha384-5oQVQGpzRohfrDNcpqJVPxUpCnWZN98G7yRieivTemqm7nrHMv/7Dxc5QJn1yqqz',
+     77: 'sha384-OtatnOHhVHN2EDfCRpxRyvObVXUBAk5nuP22hFrokDvpPB1yTvUHSPl76i7uCcLB',
+     78: 'sha384-YfcmuKtMXD7kdvu+q1B83jRJ0FvmzEA4p62Nsor0T3bX8WfW5ZpE/zcv/u6L3cCM',
+     79: 'sha384-cO8EYwhscMbPfV/rEdabnFh8Zwj+JEY9XUFAvAHvjkHqCp+H2B6gKvSsCkkoAdwb',
+     80: 'sha384-4gTvF1Y4xMbJ9QbutPtsKXqXxomCzkp5flBDgsLY1gNvtYVN9kJHaPWaQACnjTjJ',
+     81: 'sha384-AnTubtNIaGb3LrjfxCBNbH5kug4SN5ThRt5/KiDWzKoXPk2c+78Sh+4cVfhh4Feq',
+     82: 'sha384-lhvQf0gP15ZkvZnNm3VqbwQ2/PmzcjofUVLP4vlz9bHwgog51ANVQOFWGjCLRJf2',
+     83: 'sha384-kHAGtXgANZtSZjMEFVZ0xVxdn6oUGcubjj7DnUcXcGPm+K12/sbxd6HkPb1OpRtS',
+     84: 'sha384-VxGPq/ica741dfkv+zHDDmlrmaMJo9QulB0XXAdw0QLB8F2b+NGWDZbQQkjqU+qI',
+     85: 'sha384-Hki+eggc7i7lbHAWW/eMxjD7iNVE5pR1i9UBjrProe+cgFPZ0Z1Z5Zrt/vcBX43H',
+     86: 'sha384-UxB/Hz5xibOY80x+iO6vheap2RwWcUe0S+2WgMjDQ31qHpwWyo04LINVeN2xlBR/',
+     87: 'sha384-2SqbsAEkIJItwzumrvfChnFOmBwaqa5ienTdAqk0MyDGQ3QchOVc4vdpzAjAG9q7',
+     88: 'sha384-nAml/s/oIoHgFsyE0K2J7q7S7aIET0P8IBw+UArudb6CPmX1C6PZX5XC41SqJVR7',
+     89: 'sha384-F3zSCK96MAuEEHBh6wp4ueEGBBbL5ZHNANXTvnwXq9V36NFnyMi6gk2iwa1e95wJ',
+     90: 'sha384-G+dsGui8qmykymK5PXKKWDuHdwHV5acQ+FLFuar08LGccxQHsYtd+xfpwUqDGYKV',
+     91: 'sha384-Z9WghIhSaO9XhGZ2vQXtWaWBLOPBTnB15TAyR8wBanBLm/vCoMwm32HZ9rKb8Ya4',
+     92: 'sha384-YcL7WYDkP7MdLH8zOcvnQartoYH4XQbW9K2mXSASklOJNoRr2XLVgcNvDjVqc2BH',
+     93: 'sha384-DS6OaYWpCtM9BWCRco16s3SSsCDnkh2qJxVuCtNkeqA9x7Kav690PHsZF5sUdv7i',
+     94: 'sha384-iU16fweaSw8z7Mgd65UP8dOJgJbC8DoF/4DLi+dRG1H3c2HVp+Kl71xKZmGjbbir',
+     95: 'sha384-n5yHjRYopFtYSPTA60rDbPXZRpMQ294tqBomXmpn+RNiLSlLX76ncOj3/MxGPswj',
+     96: 'sha384-gmP8YLAXP1T0ZNAez6lTZMTW3BIj9iVVeF/g+vFHmv3pEFiuuJy7IbHOe4fTWTsy',
+     97: 'sha384-jvIA344Zlhys258r9MyNYSSgV4JEoEMdTWub7qq8aXl8F1ZUlazV1dpO8InKuGfz',
+     98: 'sha384-ebvhuDUdOb9ekdeuSYmvZS8G+j6ztNVKoHIvVbz4j/ZTVBusAQIkZ+xhq8mWSPl0',
+     99: 'sha384-XaNNLxYK3j6UULZBxTmNS5I7NVSkxI1nsuhQKwhzTMtrfeec5wuifLnEVcdXNzY4',
+    100: 'sha384-J3J4Qnk75KMiiQZeOte2T3/b7qdRI1OtkPxXgZ8hKNJly9qeOQI3aFlAgeLcwB/6',
+    101: 'sha384-9cmvvB9kOBau9VI7/pmTFdtqreduaxKfDpiMRCA8h4YvL+edDHoPXMS9WVToYZbN',
+    102: 'sha384-2p8owUqBVQOL8rvZYWnlQaN2cIx4sxw4c9yEjUb4YEocsnvVPSsQlZbXjZsI7VAu',
+    103: 'sha384-3FnXV01N0wc/bmUYoez/YItFfp5Q6y+YkmVHKxDHFtLOgVRjQGh+XppHessAi9FA',
+    104: 'sha384-8TrEpc3hMkExUFrnt8B6/njyRgTZUILt4qZsxUVjuOP3etjudkp9IHUund+jVcOV',
+    105: 'sha384-n0yKVvgFOAVQuwrqC++FtJg3Z2LXTezAGJ57UTKo7OeovuWk/PdHgD11GYbEFUL5',
+    106: 'sha384-6V5Le97lyuZ4shfFYF/k9fjnD+o0JSl/u15S+ZLoFKPSvn35ptfomecceDBMgWc2',
+    107: 'sha384-IDJgFaq9WTzE3Ghza7s7DHA0JEfzOcMclu63NPcERcC+trV7uOEEt/m52flTCMtL',
+    108: 'sha384-CKkoBZCH1lCGlsZh2hdmJbyW45Vlym7rNR+dwTAEQR1x4m50CnCZ0osTSuiiDfZF',
+    109: 'sha384-a2J4y499blpBgMaSKjeYkAfKuU0FIw2kpiTvjKu1MglOEwVt2NskEFbB1odLCg2Y',
+    110: 'sha384-wsYD8X7s9WH9voFB4PzMZVGYa/MG5F68I9654SWkWhiktQ2AmfUw+1UxoAgmj8vf',
+    111: 'sha384-fPJV/1oIU2ua/9oC8c7Py/1o0CrIF/XNRWDTe5EBjhmwq675ExvkFqa9RGFlrFJE',
+    112: 'sha384-vRHIgo6r2Xm3JXrshkIAvPebryAtSxUy3/qGvGt31xRMSNmVVuZlDDvWItktiWik',
+    113: 'sha384-8F9IEZkAf8d/lgJI2baSK/TS4DDrDvvuM0UdSZWUcDZKi/x3mWYDq/E4ZuuL8HGb',
+    114: 'sha384-xNG6kaPvL7DVUlXsRNE9DHq59VUsPqgoKLtHbaCMvfMBuvsX2twqX/iPX9a8yfnW',
+    115: 'sha384-b9KGXO1PrQy1BinwVWnhIMrDDFj+pekdXUDV8jjfVaiGwZvHvO+xDCI++mCFT8lM',
+    116: 'sha384-pFDl2mm5RMyS74bpFd3fkq9HWBbJCxEFkNFwBmVGo90eIHLzCpkF3Z0jSt9838lG',
+    117: 'sha384-ATOb3BufMZ7EaSICYzrzdYNNOfEi1G93PIBmZ9W6uPTXrsw9+EXzSrmuakXabpxr',
+    118: 'sha384-0QhD3HWsCZ7///XJ+uVUHejiMxF4XQD1D34cv2eXbwLdWI+Msadmziyv0NTc7XNQ',
+    119: 'sha384-0AN5P807fuGSY47v2eb79kz9Faxpr6QYojl7roKPzHalGy7s9p7Oil/soCvKT8FS',
+    120: 'sha384-PbviUlmCDAPtsdBWsqiVYedvs85xfjYptKsfBoBttYwnpagiADmMCDi710eqOxUf',
+    121: 'sha384-Fs2645psjc2jAbtECSNRk0zKaYW7SL2427GlIxvA/ETBbnfxG9GU8Fr2mIeBqH9J',
+    122: 'sha384-xWfjakLK7GjUB72hpvUHjtDrEoh3NQk75NvV05Wq4GfG2VR3nFBqk2LNEou66KmD',
+    123: 'sha384-xwxyPSbigEJUlFNnEf1m6QNE/ih6san3OpZBt7jGS4Qid7kqbpUqrJ65kylWYbgO',
+    124: 'sha384-lZmzrpQ8jWJKhlmRkxLSWEen7m3LplS2yzr39qurBuvtrx5TwA8totbjYfKpw+IL',
+    125: 'sha384-bj+cSbgz7wpSBOKvBibJ+rbc3xB48v44T5I1FYwKw5u+SwWYngRUJQLEt6KD9Bcg',
+    126: 'sha384-kPFBGJ4cNMcCb0UKxshMCn0Yt1Qj3EDhr+Lkt5X9m2ZrCoCiPvVaLiVDuqc4MjGF',
+    127: 'sha384-xk9ENg5CZF37JR7IBmh0GMgwgjFdEvHrHeH6Z8znZopZNTgN/AQRNN/9dUwLO7xG',
+};
+
 const INSTRUMENTS = [
     { name: 'Grand Piano',    gm: 0  },
     { name: 'Electric Piano',  gm: 4  },
@@ -517,11 +670,19 @@ function _activeToneNameAt(toneChanges, toneBase, t) {
     return active;
 }
 
-function _loadScript(url) {
+// `integrity` (issue #12) is an optional SRI hash. When present, the tag also
+// needs `crossorigin="anonymous"` so the browser performs the request in CORS
+// mode and can validate the digest — without it, a cross-origin script with an
+// `integrity` attribute is fetched without CORS and always fails the check.
+function _loadScript(url, integrity) {
     return new Promise((resolve, reject) => {
         if (document.querySelector(`script[src="${url}"]`)) { resolve(); return; }
         const s = document.createElement('script');
         s.src = url;
+        if (integrity) {
+            s.integrity = integrity;
+            s.crossOrigin = 'anonymous';
+        }
         s.onload = resolve;
         s.onerror = () => reject(new Error('Failed to load ' + url));
         document.head.appendChild(s);
@@ -536,7 +697,7 @@ async function _synthInit() {
     if (_synthPlayer) return;
     try {
         if (!_playerScriptLoaded) {
-            await _loadScript(WAF_PLAYER_URL);
+            await _loadScript(WAF_PLAYER_URL, WAF_PLAYER_INTEGRITY);
             _playerScriptLoaded = true;
         }
         if (typeof WebAudioFontPlayer === 'undefined') return;
@@ -569,7 +730,7 @@ async function _synthLoadInstrumentByGm(gm, label) {
 
     try {
         if (!window[varName]) {
-            await _loadScript(_wafUrl(gm));
+            await _loadScript(_wafUrl(gm), WAF_SOUNDFONT_INTEGRITY[gm]);
         }
         // A newer call to this function started (and possibly already
         // finished) while this one's script fetch was in flight -- that
@@ -3042,6 +3203,7 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         noteToMidi, midiToNoteName, isBlackKey, _neonRGB, _rgbStr,
         _wafFile, _wafVar, _wafUrl, _midiResolveSaved, _computeOctaveShift, _nearTermMidiRange,
+        WAF_PLAYER_URL, WAF_PLAYER_INTEGRITY, WAF_SOUNDFONT_INTEGRITY, INSTRUMENTS,
         _normalizeHand, _notePassesHandFilter, _approachAlpha,
         _rangeMismatchSummary, _nearTermMismatchSummary,
         _programChangeInstrumentIndex, _pitchBendSemitones,
