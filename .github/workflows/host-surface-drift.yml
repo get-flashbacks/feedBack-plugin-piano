@@ -1,12 +1,14 @@
 name: host-surface-drift
 
 # tests/host-compat.test.js pins the plugin's behavior against hand-written
-# fixtures, so it cannot notice core changing: rename `logicalSourceKey`, move
-# `setRenderer` again, or drop `ui.playerControlSlot()` and every test still
-# passes. This job closes that gap from the other side — it re-reads a live
-# core checkout for every API README.md's host surface table declares, and
-# checks both audited refs and current main, so the compatibility floor
-# in README.md degrades loudly instead of silently.
+# fixtures, so it cannot notice core changing: rename `logicalSourceKey`, drop
+# `setRenderer` from every file core ships it in, or drop `ui.playerControlSlot()`
+# and every test still passes. (A *move* of a probed file inside `static/` is
+# not detectable — the probes match on a directory prefix plus extension, not
+# on a specific file.) This job closes that gap from the other side — it
+# re-reads a live core checkout for every API README.md's host surface table
+# declares, and checks both audited refs and current main, so the compatibility
+# floor in README.md degrades loudly instead of silently.
 #
 # It clones core, so it needs the network. Gating every PR on that would flake
 # on transient GitHub or DNS failures, so it runs on a schedule (and on demand)

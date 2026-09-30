@@ -7,18 +7,18 @@
 //   node tools/verify-host-surface.js --list       print the surface and exit
 //
 // tests/host-compat.test.js pins the plugin's *behavior* against hand-written
-// fixtures, so it cannot notice core changing: rename `logicalSourceKey`, move
-// `setRenderer` again, or drop `ui.playerControlSlot()` and all 13 tests still
-// pass. This script closes that gap from the other side — it checks core's own
-// source for each declared API, so a minimum-version claim degrades loudly
-// instead of silently.
+// fixtures, so it cannot notice core changing: rename `logicalSourceKey`, drop
+// `setRenderer` from every file core ships it in, or drop
+// `ui.playerControlSlot()` and all 13 tests still pass. This script closes
+// that gap from the other side — it checks core's own source for each declared
+// API, so a minimum-version claim degrades loudly instead of silently.
 //
 // It needs a core checkout, which this repo does not carry, so it clones (or
 // reuses) one under a temp dir. That needs the network, hence the scheduled
 // CI job (`.github/workflows/host-surface-drift.yml`) rather than a per-PR
 // gate — the same reasoning as sri-drift.yml. The per-PR half is the network-
-// free shape check in tests/host-compat.test.js plus `--list`, which asserts
-// the probe table and the README table name the same APIs.
+// free parity check in tests/host-compat.test.js, which asserts the same
+// probe table and README table agree.
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -34,10 +34,12 @@ const AUDITED_REFS = [
     { ref: '3a4dd7ad6eea30edc6217f5dd1bf1f595c9e6c88', version: '0.3.0-alpha.2', role: 'current head when audited' },
 ];
 
-// Files under core's static/ that are first-party. `static/vendor/` and
-// `static/js/*.min.js` bundle third-party code that mentions plenty of the
+// Files under core's static/ and lib/ that are first-party. `static/vendor/`
+// and `static/js/*.min.js` bundle third-party code that mentions plenty of the
 // words we probe for (`resize`, `notes`, `chordTemplates`), so matching into
-// them would turn a renamed core API into a false pass.
+// them would turn a renamed core API into a false pass. listFiles() has already
+// narrowed to `static/` and `lib/`, so the vendor check only needs the prefix
+// `static/` to anchor on.
 const FIRST_PARTY = /^(?:static\/(?!vendor\/)|lib\/)/;
 
 // Each entry: the API as README.md names it, and a probe for it. `paths` are
@@ -237,7 +239,13 @@ function requestedRefs(args) {
 }
 
 function checkVersion(repo, audit) {
-    const live = git(['show', 'HEAD:VERSION'], repo).trim();
+    let live;
+    try {
+        live = git(['show', 'HEAD:VERSION'], repo).trim();
+    } catch (error) {
+        console.error('could not read VERSION at ' + audit.ref + ':\n' + String(error.stderr || error.message).trim());
+        return false;
+    }
     if (audit.version && live !== audit.version) {
         console.error('VERSION at ' + audit.ref + ' is ' + live + ', expected ' + audit.version);
         return false;

@@ -429,78 +429,65 @@ test('only the focused panel receives routed MIDI in split-panel mode', async ()
 // the declaration rotting into a second unmaintained copy of itself.
 const fs = require('node:fs');
 const path = require('node:path');
+const { AUDITED_REFS, SURFACE } = require('../tools/verify-host-surface');
 
-const TOOL = path.join(__dirname, '..', 'tools', 'verify-host-surface.js');
-
-// The tool is a script, not a module, so it is read rather than required —
-// requiring it would run main() and clone core mid-suite. Reaching into its
-// source is the price of keeping the probe table in exactly one place; the
-// assertions below are what make that tolerable.
-const toolSrc = fs.readFileSync(TOOL, 'utf8');
-const toolNames = [...toolSrc.matchAll(/^\s*\{\s*name:\s*'([^']+)'/gm)].map((m) => m[1])
-    .concat([...toolSrc.matchAll(/^\s*name:\s*'([^']+)',\s*$/gm)].map((m) => m[1]));
 const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
 const readmeTable = readme.slice(readme.indexOf('### 1. Host'), readme.indexOf('### 2. Browser'));
 
+// The API names the probe table greps for, as the tool itself exposes them.
+// Both directions below compare against this list rather than scraping the
+// tool's source, so a stale probe and an unprobed README row are judged by the
+// same token comparison.
+const probeNames = SURFACE.map((api) => api.name);
+
+// Strip a call signature, a `<placeholder>`, and the namespace path, so
+// README's `window.feedBackViz_<id>` compares against the probe's `feedBackViz_`
+// and `window.slopsmith` against `window.slopsmith`.
+const bare = (name) => name
+    .replace(/\(.*$/, '')
+    .replace(/<[^>]*>/g, '')
+    .split('.').pop();
+
+// The API names README's host section claims. Every backticked token in a table
+// row counts, not just the first cell — `window.slopsmithViz_<id>` and
+// `highway:visibility` are declared in the "Used for" column, and the
+// `uiVersion` / `playerControlSlot` row names two APIs in one cell.
+const declared = new Set();
+for (const [, row] of readmeTable.matchAll(/^\|(.*)$/gm)) {
+    for (const [, name] of row.matchAll(/`([^`]+)`/g)) declared.add(bare(name));
+}
+// Backticked text that is not an API claim: `id`/`songInfo` are the parameter
+// and the argument of a described signature, `midi-input` is the domain's name
+// (its methods each carry their own probe) rather than an identifier the plugin
+// reads, and `VIZ_FACTORY_PREFIXES` is splitscreen's internal array, named only
+// to explain the legacy export.
+for (const noise of ['id', 'songInfo', 'midi-input', 'VIZ_FACTORY_PREFIXES']) declared.delete(noise);
+
 test('the drift checker probes every API the README host table names', () => {
     assert.ok(readmeTable.length > 0, 'README still has a "### 1. Host" section');
-    assert.ok(toolNames.length >= 30, `probe table looks truncated (${toolNames.length} entries)`);
-    // Pull the API tokens out of the table's first column — each row starts
-    // "| `...` |", possibly several backticked names in one cell. Names are
-    // compared on their last dotted segment: README writes them the way a user
-    // reads them (`window.feedBackViz_<id>`, `feedBack.uiVersion`,
-    // `window.highway.resize()`) while a probe is keyed on the bare identifier
-    // it greps for (`feedBackViz_`, `uiVersion`, `highway.resize`).
-    // Strip a call signature, a `<placeholder>`, and the namespace path, so
-    // README's `window.feedBackViz_<id>` compares against the probe's
-    // `feedBackViz_` and `window.slopsmith` against `window.slopsmith`.
-    const bare = (name) => name
-        .replace(/\(.*$/, '')
-        .replace(/<[^>]*>/g, '')
-        .split('.').pop();
-    // A declared name is covered when some probe names it exactly, or names a
-    // prefix of it (README writes `feedBackViz_<id>`, the probe greps
-    // `feedBackViz_`).
-    // Compare both sides on the bare identifier: README writes the namespace
-    // a user reads (`window.feedBack.on`, `window.slopsmith.midiInput`), a
-    // probe is keyed on what it greps for (`on`, `midiInput`).
-    const bareProbes = toolNames.map(bare);
-    const covered = (name) => bareProbes.some((probe) => name === probe || name.startsWith(probe));
-    const declared = new Set();
-    for (const [, cell] of readmeTable.matchAll(/^\|\s*(.*?)\s*\|/gm)) {
-        // Every backticked token in the cell, not just the first: the
-        // `uiVersion` / `playerControlSlot` row names two APIs, and reading
-        // only the leading group would let the second go unprobed unnoticed.
-        for (const [, name] of cell.matchAll(/`([^`]+)`/g)) declared.add(bare(name));
-    }
-    // Prose that happens to sit in the first column is not an API claim:
-    // `id`/`songInfo` are the parameter and the argument of a described
-    // signature, and `midi-input` is the domain's name (its methods each carry
-    // their own probe) rather than an identifier the plugin reads.
-    for (const noise of ['id', 'songInfo', 'midi-input']) declared.delete(noise);
-    const missing = [...declared].filter((name) => !covered(name));
+    const probed = new Set(probeNames.map(bare));
+    const missing = [...declared].filter((name) => !probed.has(name));
     assert.deepEqual(missing, [], `README names APIs with no probe: ${missing.join(', ')}`);
 });
 
 test('the probe table names no API the README has dropped', () => {
     // The reverse direction: a probe for something the README no longer claims
     // is a stale entry that would fail the scheduled job for no reason.
-    const stale = toolNames.filter((name) => !readmeTable.includes(name));
+    const stale = SURFACE.filter((api) => !declared.has(bare(api.name))).map((api) => api.name);
     assert.deepEqual(stale, [], `probe table has entries absent from README: ${stale.join(', ')}`);
 });
 
 test('the audited refs in the tool are the ones the README cites', () => {
     for (const ref of readmeTable.matchAll(/\b([0-9a-f]{7,40})\b/g)) {
         const short = ref[1].slice(0, 7);
-        assert.ok(toolSrc.includes(short),
+        assert.ok(AUDITED_REFS.some((audit) => audit.ref.startsWith(short)),
             `README cites ${ref[1]} but the tool has no such ref — update AUDITED_REFS`);
     }
     // And the tool pins a VERSION per audited ref, so a moved VERSION file
     // fails the job rather than passing silently.
-    const declaredVersions = [...toolSrc.matchAll(/version:\s*'([\d.]+-\S+?)'/g)].map((m) => m[1]);
-    assert.equal(declaredVersions.length, 2, 'one declared VERSION per audited ref');
-    for (const version of declaredVersions) {
-        assert.ok(readme.includes(version), `README should mention core VERSION ${version}`);
+    for (const audit of AUDITED_REFS) {
+        assert.ok(audit.version, `AUDITED_REFS entry ${audit.ref} pins no VERSION`);
+        assert.ok(readme.includes(audit.version), `README should mention core VERSION ${audit.version}`);
     }
 });
 
@@ -514,10 +501,10 @@ test('every API screen.js reads off a host global has a probe', () => {
     const events = new Set([...screen.matchAll(/'(highway:[a-z-]+|midi-input:[a-z-]+)'/g)].map((m) => m[1]));
     assert.ok(events.size > 0, 'screen.js subscribes to at least one host event');
     for (const event of events) {
-        assert.ok(toolSrc.includes(event), `screen.js subscribes to '${event}' with no probe`);
+        assert.ok(probeNames.includes(event), `screen.js subscribes to '${event}' with no probe`);
     }
     for (const method of ['discover', 'listSources', 'open', 'close']) {
         assert.ok(screen.includes('mi.' + method + '('), `screen.js calls mi.${method}()`);
-        assert.ok(toolSrc.includes("name: '" + method + "'"), `mi.${method}() has no probe`);
+        assert.ok(probeNames.includes(method), `mi.${method}() has no probe`);
     }
 });
