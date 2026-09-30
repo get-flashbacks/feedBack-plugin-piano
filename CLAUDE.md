@@ -160,9 +160,40 @@ against a live core. **When you consume a new host API, add it to the fixture
 and assert it there** — a newly-consumed host surface that is only exercised
 in a real browser is exactly how a minimum-version claim goes stale.
 
+Those fixtures are hand-written, so they cannot notice *core* drifting: rename
+`logicalSourceKey`, drop `playerControlSlot`, or ship a `setRenderer` under a
+different identifier and every fixture test still passes.
+`tools/verify-host-surface.js` closes that gap from the other side — it clones
+core, checks `VERSION` against the two audited refs, and probes those refs plus
+current upstream `main` for every API in the `SURFACE` table
+(probe name + path globs + pattern per row). It needs the network, so
+`.github/workflows/host-surface-drift.yml` runs it on a schedule and on
+`workflow_dispatch`, mirroring `sri-drift.yml`. Probes match a file's contents,
+not its path beyond a directory prefix, so moving a probed file *within*
+`static/` is not drift it can see.
+
+**A new host API means three edits, not one:** the `SURFACE` entry in
+`tools/verify-host-surface.js`, a row in README.md's host table, and the
+fixture in `tests/host-compat.test.js`. The last four tests in that suite
+enforce the first two in both directions (a probe with no README row, a README
+row with no probe, a ref or `VERSION` the README doesn't cite, a host event
+`screen.js` subscribes to that nothing probes) and run per-PR without the
+network, so the declaration cannot silently drift into two unmaintained
+copies of itself. Run the checker locally with `CORE_CHECKOUT=/path/to/core
+node tools/verify-host-surface.js` to skip the clone, or `--ref <sha>` to
+audit a different ref.
+
+`AUDITED_REFS` pins full SHAs, so it assumes core keeps its history. A
+`could not check out <sha>` line from the job means that commit is gone —
+core does a rebase, a squash-merge cleanup, or a GC — and the ref has to be
+re-derived from `VERSION` rather than trusted: `git log --format=%H -- VERSION`
+in a core clone, `git show <sha>:VERSION` down that list until it reads the
+expected version, then put that SHA in `AUDITED_REFS` with its `version`
+string and re-cite it in README.md.
+
 The renderer and MIDI input degrade independently: a host with no
 `midi-input` domain (or a non-v1 one) still renders, but MIDI-driven synth
-playback and scoring are unavailable; `_mi()` returning null is the
+playback and scoring are unavailable. `_mi()` returning null is the
 visualization-only path, not an error state.
 
 ## Testing

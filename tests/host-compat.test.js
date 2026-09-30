@@ -417,3 +417,94 @@ test('only the focused panel receives routed MIDI in split-panel mode', async ()
     left.renderer.destroy();
     right.renderer.destroy();
 });
+
+// ── Host-surface declaration drift (issue #43) ─────────────────────────────
+//
+// tools/verify-host-surface.js re-reads a live core checkout for every API
+// below; that needs the network, so it runs on a schedule
+// (.github/workflows/host-surface-drift.yml). The checks here are its
+// network-free half, and they are the ones that run per-PR: the probe table
+// must keep naming the same APIs as README.md's surface table, and the surface
+// table must keep covering what screen.js actually touches. Together they stop
+// the declaration rotting into a second unmaintained copy of itself.
+const fs = require('node:fs');
+const path = require('node:path');
+const { AUDITED_REFS, SURFACE } = require('../tools/verify-host-surface');
+
+const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+const readmeTable = readme.slice(readme.indexOf('### 1. Host'), readme.indexOf('### 2. Browser'));
+
+// The API names the probe table greps for, as the tool itself exposes them.
+// Both directions below compare against this list rather than scraping the
+// tool's source, so a stale probe and an unprobed README row are judged by the
+// same token comparison.
+const probeNames = SURFACE.map((api) => api.name);
+
+// Strip a call signature, a `<placeholder>`, and the namespace path, so
+// README's `window.feedBackViz_<id>` compares against the probe's `feedBackViz_`
+// and `window.slopsmith` against `window.slopsmith`.
+const bare = (name) => name
+    .replace(/\(.*$/, '')
+    .replace(/<[^>]*>/g, '')
+    .split('.').pop();
+
+// The API names README's host section claims. Every backticked token in a table
+// row counts, not just the first cell — `window.slopsmithViz_<id>` and
+// `highway:visibility` are declared in the "Used for" column, and the
+// `uiVersion` / `playerControlSlot` row names two APIs in one cell.
+const declared = new Set();
+for (const [, row] of readmeTable.matchAll(/^\|(.*)$/gm)) {
+    for (const [, name] of row.matchAll(/`([^`]+)`/g)) declared.add(bare(name));
+}
+// Backticked text that is not an API claim: `id`/`songInfo` are the parameter
+// and the argument of a described signature, `midi-input` is the domain's name
+// (its methods each carry their own probe) rather than an identifier the plugin
+// reads, and `VIZ_FACTORY_PREFIXES` is splitscreen's internal array, named only
+// to explain the legacy export.
+for (const noise of ['id', 'songInfo', 'midi-input', 'VIZ_FACTORY_PREFIXES']) declared.delete(noise);
+
+test('the drift checker probes every API the README host table names', () => {
+    assert.ok(readmeTable.length > 0, 'README still has a "### 1. Host" section');
+    const probed = new Set(probeNames.map(bare));
+    const missing = [...declared].filter((name) => !probed.has(name));
+    assert.deepEqual(missing, [], `README names APIs with no probe: ${missing.join(', ')}`);
+});
+
+test('the probe table names no API the README has dropped', () => {
+    // The reverse direction: a probe for something the README no longer claims
+    // is a stale entry that would fail the scheduled job for no reason.
+    const stale = SURFACE.filter((api) => !declared.has(bare(api.name))).map((api) => api.name);
+    assert.deepEqual(stale, [], `probe table has entries absent from README: ${stale.join(', ')}`);
+});
+
+test('the audited refs in the tool are the ones the README cites', () => {
+    for (const ref of readmeTable.matchAll(/\b([0-9a-f]{7,40})\b/g)) {
+        const short = ref[1].slice(0, 7);
+        assert.ok(AUDITED_REFS.some((audit) => audit.ref.startsWith(short)),
+            `README cites ${ref[1]} but the tool has no such ref — update AUDITED_REFS`);
+    }
+    // And the tool pins a VERSION per audited ref, so a moved VERSION file
+    // fails the job rather than passing silently.
+    for (const audit of AUDITED_REFS) {
+        assert.ok(audit.version, `AUDITED_REFS entry ${audit.ref} pins no VERSION`);
+        assert.ok(readme.includes(audit.version), `README should mention core VERSION ${audit.version}`);
+    }
+});
+
+test('every API screen.js reads off a host global has a probe', () => {
+    // The staleness the fixture suite structurally cannot catch: a new host
+    // API consumed by screen.js with nothing in the declaration. Approximated
+    // by the host event names the plugin subscribes to, which are the most
+    // silently-breakable (a renamed event throws nothing — the handler simply
+    // stops firing), plus the midi-input methods it calls on the domain.
+    const screen = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+    const events = new Set([...screen.matchAll(/'(highway:[a-z-]+|midi-input:[a-z-]+)'/g)].map((m) => m[1]));
+    assert.ok(events.size > 0, 'screen.js subscribes to at least one host event');
+    for (const event of events) {
+        assert.ok(probeNames.includes(event), `screen.js subscribes to '${event}' with no probe`);
+    }
+    for (const method of ['discover', 'listSources', 'open', 'close']) {
+        assert.ok(screen.includes('mi.' + method + '('), `screen.js calls mi.${method}()`);
+        assert.ok(probeNames.includes(method), `mi.${method}() has no probe`);
+    }
+});
