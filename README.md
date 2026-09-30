@@ -20,8 +20,38 @@ A plugin for [Slopsmith](https://github.com/got-feedback/feedback) that replaces
 
 ## Requirements
 
-- **Chrome or Edge** for MIDI keyboard input (Firefox does not support Web MIDI)
-- MIDI features are optional — the piano view works without a MIDI keyboard
+These are three independent requirements — satisfying one does not imply the others. Core compatibility, browser support for MIDI, and network access for the built-in synth are checked separately below.
+
+### 1. Host: feedBack core v0.3.0-alpha.1 or newer
+
+Piano Highway declares a **minimum host of feedBack v0.3.0-alpha.1**. That is the earliest tagged core snapshot whose source carries every API this plugin consumes:
+
+| Host API | Used for |
+|---|---|
+| `window.feedBackViz_<id>` factory global (+ legacy `window.slopsmithViz_` alias) | Renderer discovery by the visualization picker |
+| `setRenderer` lifecycle: `contextType`, `init`, `draw`, `resize`, `destroy` | Mounting and teardown |
+| `matchesArrangement(songInfo)` | Auto-mode arrangement matching |
+| Chart bundle fields: `isReady`, `currentTime`, `notes`, `chords`, `beats`, `chordTemplates`, `toneChanges`, `toneBase` | Rendering, chord labels, measure-aware retargeting, auto tone |
+| `songInfo.has_notation` / `arrangements` / `arrangement_index` | Yielding to notation-only visualizations |
+| Event bus (`window.feedBack.on` / `.off`, plus the legacy `window.slopsmith` alias) and `highway:canvas-replaced` / `highway:visibility` | Overlay re-sync on host canvas replacement and visibility changes |
+| `midi-input` domain **v1** via `window.slopsmith.midiInput` — `discover`, `listSources`, `select`, `open`, `close`, `logicalSourceKey` | MIDI keyboard input |
+| `feedBack.uiVersion` + `feedBack.ui.playerControlSlot()` | Settings gear placement in the v3 player |
+
+`tests/host-compat.test.js` pins this floor as an executable contract: each fake host in that file reproduces the alpha.1 surface, and the renderer must mount, draw, route MIDI, survive pause/seek/song changes, and tear down against it. All 13 tests also pass against the current core (v0.3.0-alpha.2, commit `3a4dd7a`), whose surface is a superset — the two `setRenderer` / `matchesArrangement` sites moved from `static/app.js` to `static/js/viz.js`, with no change to the published contract.
+
+This is a source-level compatibility floor, not a runtime certification of every historical snapshot: no test here claims that all builds older than alpha.1 fail, only that alpha.1 is the earliest one examined that provides everything the plugin needs.
+
+**Visualization-only fallback.** The renderer and MIDI input have different requirements. The scrolling piano view works on a visualization-only host — a core with no `midi-input` domain, or one whose domain is not v1, still renders the board, scores notes and plays the synth; only the MIDI device list, the note-on/note-off input and hit detection are unavailable, and the settings panel shows an empty device list. Likewise, a host with no event bus falls back to plain `window` events, and a host without the `window.slopsmithSplitscreen` helper runs the single-panel focus path.
+
+### 2. Browser: Chrome or Edge for MIDI keyboard input
+
+MIDI input needs the **Web MIDI API**, which Firefox does not implement. The permission prompt is also part of this requirement: it fires on first use of the device list (core's `discover()` is the permission boundary, calling `requestMIDIAccess()`), so a denied or dismissed prompt leaves MIDI unavailable until the user re-allows it in the browser's site settings. Chrome may also require a secure context (HTTPS, or `localhost`).
+
+MIDI features are optional — the piano view works without a MIDI keyboard.
+
+### 3. Network: WebAudioFont for the built-in synthesizer
+
+The instrument playback is **WebAudioFont**-based. On first use the plugin loads `WebAudioFontPlayer.js` and the soundfont data from `surikov.github.io`, so built-in sound needs network access (or a reachable cache) and an `AudioContext` the browser will allow to start — most browsers block audio until a user gesture, so the first note may need a click on the player. If either the script or the soundfont fails to load, the plugin logs a warning and everything except audio keeps working; note visuals, MIDI input and scoring are unaffected.
 
 ## Installation
 

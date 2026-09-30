@@ -138,11 +138,40 @@ version cache-busts the served JS/CSS URL. Patch (`4.x.y`) for fixes,
 minor (`4.x.0`) for new features, matching normal semver conventions.
 `CHANGELOG.md`'s `[Unreleased]` section should be updated alongside.
 
+## Host compatibility (minimum core)
+
+The declared minimum host is **feedBack core v0.3.0-alpha.1** (issue #39) —
+the earliest tagged core snapshot carrying every host API this plugin
+consumes. README.md's "Requirements" section carries the full surface
+table plus the three independently-checked requirements (core version,
+Web MIDI browser/permission support, WebAudioFont network/audio
+prerequisites).
+
+`tests/host-compat.test.js` is the executable half of that declaration: its
+fixtures reproduce the alpha.1 host surface (event bus, chart bundle,
+`midi-input` v1 domain, optional splitscreen helper) and the suite pins
+mount/draw/resize/destroy, MIDI discovery and routing, pause/seek/song
+change, the visualization-only fallback, and split-panel focus. **When you
+consume a new host API, add it to the fixture and assert it there** — a
+newly-consumed host surface that is only exercised in a real browser is
+exactly how a minimum-version claim goes stale.
+
+The renderer and MIDI input degrade independently: a host with no
+`midi-input` domain (or a non-v1 one) still renders, scores and synthesizes;
+`_mi()` returning null is the visualization-only path, not an error state.
+
 ## Testing
 
 ```bash
-node --test tests/screen.test.js   # node:test — no package.json/build step in this repo
+node --test tests/*.test.js        # node:test — no package.json/build step in this repo
 ```
+
+Two suites: `tests/screen.test.js` (helper and rendering coverage) and
+`tests/host-compat.test.js` (the minimum-host contract). Both share the
+DOM/`window` stub in `tests/harness.js` — `installBrowserHarness({ feedBack,
+slopsmith, slopsmithSplitscreen, storage })` — so host-contract fixtures
+(the `midi-input` domain, the event bus, the splitscreen helper) live in
+the suites rather than in the harness itself.
 
 `screen.js` exports a Node-only test hook (`module.exports`, guarded by
 `typeof module !== 'undefined'`) alongside the browser `window.*Viz_piano`
