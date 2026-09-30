@@ -161,8 +161,9 @@ and assert it there** — a newly-consumed host surface that is only exercised
 in a real browser is exactly how a minimum-version claim goes stale.
 
 The renderer and MIDI input degrade independently: a host with no
-`midi-input` domain (or a non-v1 one) still renders and synthesizes;
-`_mi()` returning null is the visualization-only path, not an error state.
+`midi-input` domain (or a non-v1 one) still renders, but MIDI-driven synth
+playback and scoring are unavailable; `_mi()` returning null is the
+visualization-only path, not an error state.
 
 ## Testing
 
