@@ -29,8 +29,8 @@ Piano Highway declares a **minimum host of feedBack v0.3.0-alpha.1** — the fir
 Rows are grouped by what the plugin can *do* when the host provides them, not by whether a missing one would break the board — nearly every row is read behind a `typeof` or existence check, so a dropped API degrades a feature rather than the renderer:
 
 - **The board itself** — the factory global, the `setRenderer` lifecycle, `matchesArrangement` (and the `songInfo` fields it reads) and the chart bundle fields. Without these the visualization does not appear at all.
-- **MIDI keyboard input** — the `midi-input` domain and the bus event that reconciles plugged/unplugged devices. Without these the board still renders and plays the synth, but there is no keyboard to play — and since hits are judged from played notes, hit detection stays off too (see *Visualization-only fallback* below).
-- **Host chrome** — the event bus and its `highway:` events, `uiVersion` / `ui.playerControlSlot()`, and `window.highway.resize()` *(optional)*. These affect where the settings gear sits and when the overlay re-syncs or hides; the canvas events do reach the board's own visibility, since a host hiding its highway is expected to hide the overlay with it.
+- **MIDI keyboard input** — the `midi-input` domain and the bus event that reconciles plugged/unplugged devices. Without these the board still renders, but there is no keyboard to play, and both the synth and hit detection are driven by played notes, so neither is available (see *Visualization-only fallback* below).
+- **Host chrome** — the event bus and its `highway:` events, `uiVersion` / `ui.playerControlSlot()`, and `window.highway.resize()` *(optional)*. These affect where the settings gear sits and when the overlay re-syncs; `highway:visibility` additionally reaches the board's own visibility, since a host hiding its highway is expected to hide the overlay with it.
 
 | Host API | Used for |
 |---|---|
@@ -38,7 +38,7 @@ Rows are grouped by what the plugin can *do* when the host provides them, not by
 | `setRenderer` lifecycle: `contextType`, `init`, `draw`, `resize`, `destroy` | Mounting and teardown |
 | `matchesArrangement(songInfo)` | Auto-mode arrangement matching |
 | Chart bundle fields: `isReady`, `currentTime`, `notes`, `chords`, `beats`, `chordTemplates`, `toneChanges`, `toneBase` | Rendering, chord labels, measure-aware retargeting, auto tone |
-| `songInfo.has_notation` / `arrangements` / `arrangement_index` | Yielding to notation-only visualizations |
+| `songInfo.arrangement` / `arrangements` / `arrangement_index` / `has_notation` | Auto-mode matching on the top-level arrangement name, or the active entry in `arrangements`; `has_notation` + the active entry's note count is how a notation-only keys arrangement yields to a notation visualization |
 | Event bus (`window.feedBack.on` / `.off`, plus the legacy `window.slopsmith` alias) and `highway:canvas-replaced` / `highway:visibility` | Overlay re-sync on host canvas replacement and visibility changes |
 | `midi-input:sources-changed` on that bus | MIDI device plug/unplug reconciliation |
 | `midi-input` domain **v1** via `window.slopsmith.midiInput` — `discover`, `listSources`, `select`, `open`, `close`, `logicalSourceKey` | MIDI keyboard input |
@@ -49,7 +49,7 @@ Rows are grouped by what the plugin can *do* when the host provides them, not by
 
 This is a source-level compatibility floor, not a runtime certification of every historical snapshot: no test here claims that all builds older than alpha.1 fail, only that alpha.1 is the earliest one examined that provides everything the plugin needs.
 
-**Visualization-only fallback.** The renderer and MIDI input have different requirements. The scrolling piano view works on a visualization-only host — a core with no `midi-input` domain, or one whose domain is not v1, still renders the board and plays the synth; only the MIDI device list, the note-on/note-off input and hit detection are unavailable, and the settings panel shows an empty device list. Likewise, a host with no event bus falls back to plain `window` events, and a host without the `window.slopsmithSplitscreen` helper runs the single-panel focus path.
+**Visualization-only fallback.** The renderer and MIDI input have different requirements. The scrolling piano view works on a visualization-only host — a core with no `midi-input` domain, or one whose domain is not v1, still renders the board; what is lost is everything reachable only from a played note — the MIDI device list, note-on/note-off, the synth voice it triggers, and hit detection — and the settings panel shows an empty device list. The synth is a monitor for what you play, not a backing track: nothing in the plugin sounds a note on its own. Likewise, a host with no event bus falls back to plain `window` events, and a host without the `window.slopsmithSplitscreen` helper runs the single-panel focus path.
 
 ### 2. Browser: Web MIDI support for MIDI keyboard input
 
