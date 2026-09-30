@@ -25,11 +25,16 @@ function parsePins(src) {
     if (!base || !playerUrl || !playerPin || !table) {
         throw new Error('could not find the WAF SRI constants in screen.js — has the table moved or been renamed?');
     }
-    const soundfonts = {};
-    for (const [, gm, digest] of table[1].matchAll(/(\d+):\s*'([^']+)'/g)) soundfonts[gm] = digest;
+    // A Map, not a plain object: the keys here are matched out of the source
+    // text, and a plain object would make that look like an injection sink
+    // (and be one, if the regex were ever loosened to accept bare identifiers).
+    // A Map has no prototype chain to reach, so `set` cannot touch
+    // Object.prototype no matter what the regex matches.
+    const soundfonts = new Map();
+    for (const [, gm, digest] of table[1].matchAll(/(\d+):\s*'([^']+)'/g)) soundfonts.set(gm, digest);
 
     const missing = [];
-    for (let gm = 0; gm <= GM_MAX; gm++) if (!soundfonts[gm]) missing.push(gm);
+    for (let gm = 0; gm <= GM_MAX; gm++) if (!soundfonts.get(String(gm))) missing.push(gm);
     if (missing.length) throw new Error('WAF_SOUNDFONT_INTEGRITY is missing GM ' + missing.join(', '));
 
     return {
@@ -95,8 +100,8 @@ async function main() {
             drift.push('WebAudioFontPlayer.js\n  pinned: ' + pins.player.digest + '\n  live:   ' + playerDigest);
         }
         soundfontDigests.forEach((digest, gm) => {
-            if (digest !== pins.soundfonts[gm]) {
-                drift.push('GM ' + gm + ' (' + pins.file(gm) + '.js)\n  pinned: ' + pins.soundfonts[gm] + '\n  live:   ' + digest);
+                if (digest !== pins.soundfonts.get(String(gm))) {
+                    drift.push('GM ' + gm + ' (' + pins.file(gm) + '.js)\n  pinned: ' + pins.soundfonts.get(String(gm)) + '\n  live:   ' + digest);
             }
         });
         if (drift.length) {

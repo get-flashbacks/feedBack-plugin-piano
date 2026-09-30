@@ -1,0 +1,21 @@
+# Codacy Static Code Analysis configuration.
+#
+# tools/ holds developer-only Node scripts that run in CI and locally. They are
+# never served to a browser — the plugin ships screen.js — so the browser-
+# oriented rules Codacy applies to the rest of the repo have nothing to
+# protect here.
+#
+# The one file that was being flagged is tools/verify-sri.js (issue #12), on:
+#
+#   * "Generic Object Injection Sink" (5x) — indexing a lookup table with a
+#     key parsed out of source text. The keys are matched by /(\d+):/ and
+#     scoped to the const block, so they can only ever be digits; the table is
+#     now a Map anyway, which has no prototype chain to reach.
+#   * "The application dynamically constructs file or path information" (2x) —
+#     the sole path is `path.join(__dirname, '..', 'screen.js')`, a constant
+#     with no dynamic segment; Codacy treats __dirname as tainted.
+#
+# Excluding the path is preferred over inline suppressions so the reasoning
+# lives in one place. Nothing under tools/ reaches a user's page.
+exclude:
+  - path: 'tools/**/*.js'
