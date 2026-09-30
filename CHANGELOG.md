@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Third-party WebAudioFont scripts are now loaded with Subresource Integrity (issue #12): `WebAudioFontPlayer.js` and the per-GM `JCLive_sf2_file` soundfont data are pinned with `sha384` digests and fetched with `crossorigin="anonymous"`, so a compromised `surikov.github.io` can no longer inject arbitrary JS into the plugin's page. The pin table covers the full GM 0–127 range (tone-change auto-follow can request instruments outside the dropdown). Regenerate `WAF_PLAYER_INTEGRITY` / `WAF_SOUNDFONT_INTEGRITY` in `screen.js` with `node tools/verify-sri.js --write` when intentionally bumping the WebAudioFont version, and check them without `--write` to catch a wrong row or upstream republish; `.github/workflows/sri-drift.yml` runs that check on a schedule, because validating a digest requires fetching the bytes and would only flake a per-PR gate. An SRI mismatch fails closed, though not identically: a rejected `WebAudioFontPlayer.js` leaves the synth silent, while a rejected soundfont leaves the previously loaded instrument playing and stops tone auto-follow from updating.
+
 ### Added
 
 - Per-instance hand filter (feedback-plugin-splitscreen#66): `plugin.json` declares a `handFilter` select (Both / LH / RH) under `capabilities.visualization.settings`, and each renderer instance implements `applySetting` / `getSetting`. Splitscreen's per-panel "Viz ⚙" popover can now show a different hand in each panel. Without an override, an instance follows the global Settings value as before. Scoring (hits/misses/streak and note-key coloring) resets whenever the effective filter actually changes, but not when the same value is re-applied.
@@ -28,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Updated the Piano renderer lifecycle so it declares its 2D canvas context and keeps overlay chrome aligned with host canvas replacement and visibility changes.
 - Added a cancellable animation-frame render loop that repaints from the latest host bundle and stops during teardown.
+- A script tag that fails to load (including an SRI mismatch) is now removed from `<head>` instead of lingering, so a later load of the same URL gets a real attempt rather than short-circuiting on the dead tag.
 
 ### Changed
 

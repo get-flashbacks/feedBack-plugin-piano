@@ -148,3 +148,13 @@ node --test tests/screen.test.js   # node:test — no package.json/build step in
 `typeof module !== 'undefined'`) alongside the browser `window.*Viz_piano`
 globals — pure helpers and `_createFactory` are reachable from tests
 without a DOM.
+
+The SRI pins for the WebAudioFont player and the 128 per-GM soundfonts are
+the one thing `node --test` cannot check for correctness — a well-formed
+digest is indistinguishable from a wrong one without fetching the bytes. That
+check lives in `tools/verify-sri.js`: run bare it re-hashes every URL and
+diffs against the constants in `screen.js` (exit 1 on drift or a non-200),
+`--write` regenerates the table in place. Keep it network-free out of the
+`node --test` suite and let `.github/workflows/sri-drift.yml` run it on a
+schedule; add new third-party script loads to `parsePins()` in the same
+commit that adds their pins.

@@ -1723,3 +1723,87 @@ test('plugin.json declares the handFilter visualization setting', () => {
     assert.equal(hand.type, 'select');
     assert.deepEqual(hand.options.map(o => o.id), ['both', 'L', 'R']);
 });
+
+test('every third-party script load is pinned with a well-formed SRI hash', () => {
+    assert.match(mod.WAF_PLAYER_INTEGRITY, /^sha384-[A-Za-z0-9+/]{64}={0,2}$/);
+    // Tone-change auto-follow can request any GM program, not just the
+    // curated INSTRUMENTS list, so the pin table must cover the full range.
+    for (let gm = 0; gm <= 127; gm++) {
+        assert.match(
+            mod.WAF_SOUNDFONT_INTEGRITY[gm],
+            /^sha384-[A-Za-z0-9+/]{64}={0,2}$/,
+            'missing/invalid soundfont SRI pin for GM ' + gm
+        );
+    }
+});
+
+// `createDocument()`'s querySelector always returns null, which keeps the dedup
+// short-circuit out of the way but also makes the dedup path untestable. This
+// variant resolves `script[src="…"]` against the inserted tags so a retry can be
+// shown to actually retry.
+function scriptDocument() {
+    const doc = createDocument();
+    doc.querySelector = (selector) => {
+        const m = /^script\[src="(.+)"\]$/.exec(selector || '');
+        if (!m) return null;
+        return doc.head.children.find(c => c.src === m[1]) || null;
+    };
+    return doc;
+}
+
+test('_loadScript sets integrity and crossorigin together', async () => {
+    const doc = scriptDocument();
+    const prev = global.document;
+    global.document = doc;
+    try {
+        const pending = mod._loadScript('https://example.test/x.js', 'sha384-AAAA');
+        const s = doc.head.children[0];
+        assert.equal(s.integrity, 'sha384-AAAA');
+        assert.equal(s.crossOrigin, 'anonymous');
+        s.onload();
+        await pending;
+    } finally {
+        global.document = prev;
+    }
+});
+
+test('_loadScript leaves both attributes unset when no digest is given', async () => {
+    const doc = scriptDocument();
+    const prev = global.document;
+    global.document = doc;
+    try {
+        const pending = mod._loadScript('https://example.test/unpinned.js');
+        const s = doc.head.children[0];
+        assert.equal(s.integrity, undefined);
+        assert.equal(s.crossOrigin, undefined);
+        s.onload();
+        await pending;
+    } finally {
+        global.document = prev;
+    }
+});
+
+test('_loadScript drops a failed tag so the next caller really retries', async () => {
+    const doc = scriptDocument();
+    const prev = global.document;
+    global.document = doc;
+    try {
+        const url = 'https://example.test/retry.js';
+        const first = mod._loadScript(url, 'sha384-AAAA');
+        const failed = doc.head.children[0];
+        failed.onerror();
+        await assert.rejects(first, /Failed to load/);
+        assert.equal(doc.head.children.length, 0, 'a failed tag must not linger');
+
+        // Without the removal above, the dedup lookup would resolve off the dead
+        // tag and no second attempt would ever be made.
+        const second = mod._loadScript(url, 'sha384-AAAA');
+        const retried = doc.head.children[0];
+        assert.notEqual(retried, failed, 'retry must insert a fresh tag');
+        assert.equal(retried.integrity, 'sha384-AAAA');
+        retried.onload();
+        await second;
+    } finally {
+        global.document = prev;
+    }
+});
