@@ -8,9 +8,11 @@
 // display range, settings UI, held-notes state, and listeners are
 // now all per-instance (closured inside createFactory). Main-player
 // usage keeps its single-instance fast path via the
-// window.slopsmithSplitscreen helper surface — its absence OR
-// isActive()===false means "we're the only instance, always
-// focused."
+// window.slopsmithSplitscreen helper surface — its absence,
+// isActive()===false, or an incomplete surface all mean
+// "we're the only instance, always focused." See the Splitscreen
+// helper wrappers section for what that costs when a host really
+// does have several panels up.
 //
 // Under splitscreen (N panels, N simultaneous piano instances):
 //   - each panel hosts its own overlay canvas, scoring, display
@@ -1308,6 +1310,14 @@ function _approachAlpha(midi, notes, chords, t, handFilter = _cfg.handFilter) {
 // anchors?" queries so instance code can read the runtime environment
 // cheaply. Absence of window.slopsmithSplitscreen OR isActive()===false
 // means "main-player, always focused" from the plugin's POV.
+//
+// Split Screen is an OPTIONAL peer — standalone Piano needs none of this.
+// What it buys is per-panel chrome and, above all, authoritative focus for
+// MIDI routing: with several panels up, only the focused one may react.
+// The peer floor is 1.10.6, the earliest auditable snapshot of the
+// six-method surface (README "Requirements" carries the declaration,
+// tests/host-compat.test.js pins it with absent / partial / floor /
+// current fixtures).
 
 function _ssActive() {
     const ss = window.slopsmithSplitscreen;
@@ -1318,7 +1328,17 @@ function _ssActive() {
     // newer methods), report "not active" so the wrappers fall
     // back to the main-player single-instance fast path rather
     // than reaching a half-broken splitscreen state where focus
-    // never lands on any instance and MIDI routing dies.
+    // never lands on any instance and MIDI routing silently dies.
+    //
+    // Fail-soft is not free, and the cost is documented rather than
+    // glossed: every panel then resolves as focused, so the
+    // module-level MIDI routing slot ends up on whichever panel
+    // initialised last instead of the one the user is looking at, and
+    // panel chrome / the settings gear fall back to the whole-player
+    // mount and the shared control rail — N panels stack N overlays
+    // and N gears in the same place. Nothing on a partial surface is
+    // half-consumed, which is the point: the check is all-or-nothing
+    // precisely because half a focus API cannot route MIDI.
     return typeof ss.isCanvasFocused === 'function'
         && typeof ss.panelChromeFor === 'function'
         && typeof ss.settingsAnchorFor === 'function'
