@@ -81,21 +81,38 @@ function createMidiDomain(devices = [{ sourceId: 'd1', label: 'Test Keys', logic
 
 // A split-panel host helper exposing the six-method surface the plugin
 // validates. `focused` is mutable so a test can move focus between panels.
+// `extras` publishes the methods a later splitscreen snapshot added on top of
+// the six, `omit` removes one, and every call is recorded in `calls` so a test
+// can assert which methods the plugin actually reached for. `registerPanel`
+// gives a panel its own chrome/bar, mirroring the real canvas -> panel index
+// -> panel.div / panel.bar resolution.
 function createSplitscreenHelper(options = {}) {
     const focusListeners = new Set();
+    const panels = new Map();
+    const calls = [];
+    const chromeOf = (canvas, key) => (panels.get(canvas) || {})[key] || helper.chrome;
     const helper = {
         active: options.active !== false,
         focusedCanvas: options.focusedCanvas || null,
         chrome: options.chrome || null,
-        isActive() { return helper.active; },
-        isCanvasFocused(canvas) { return helper.focusedCanvas === canvas; },
-        panelChromeFor() { return helper.chrome; },
-        settingsAnchorFor() { return helper.chrome; },
-        onFocusChange(fn) { focusListeners.add(fn); },
-        offFocusChange(fn) { focusListeners.delete(fn); },
+        calls,
+        isActive() { calls.push(['isActive']); return helper.active; },
+        isCanvasFocused(canvas) {
+            calls.push(['isCanvasFocused', canvas]);
+            return helper.focusedCanvas === canvas;
+        },
+        panelChromeFor(canvas) { calls.push(['panelChromeFor', canvas]); return chromeOf(canvas, 'panelDiv'); },
+        settingsAnchorFor(canvas) { calls.push(['settingsAnchorFor', canvas]); return chromeOf(canvas, 'bar'); },
+        onFocusChange(fn) { calls.push(['onFocusChange', fn]); focusListeners.add(fn); },
+        offFocusChange(fn) { calls.push(['offFocusChange', fn]); focusListeners.delete(fn); },
         focusListenerCount() { return focusListeners.size; },
         setFocused(canvas) { helper.focusedCanvas = canvas; for (const fn of focusListeners) fn(); },
+        registerPanel(canvas, chrome) { panels.set(canvas, chrome); return helper; },
     };
+    for (const name of options.extras || []) {
+        helper[name] = (...args) => { calls.push([name, ...args]); };
+    }
+    for (const name of options.omit || []) delete helper[name];
     return helper;
 }
 
@@ -109,6 +126,78 @@ const BUNDLE = {
     toneBase: 'Keys',
     toneChanges: [{ t: 0, name: 'Keys' }],
 };
+
+// Mounts `count` panels laid out the way Split Screen lays them out: a panel
+// div per panel (its chrome / overlay host) holding that panel's control bar
+// and its own highway canvas, all under #player. Panels are registered with
+// `split` before `init()` because that is the order the real host uses — the
+// renderer resolves its panel chrome during init(). `split` may be null for
+// the no-peer case, where nothing resolves per panel.
+function mountSplitPanels(plugin, harness, split, count) {
+    const player = harness.doc.elementsById.player;
+    return Array.from({ length: count }, () => {
+        const panelDiv = harness.doc.createElement('div');
+        const bar = harness.doc.createElement('div');
+        const canvas = harness.doc.createElement('canvas');
+        canvas.clientWidth = 640;
+        canvas.clientHeight = 360;
+        panelDiv.appendChild(bar);
+        panelDiv.appendChild(canvas);
+        player.appendChild(panelDiv);
+        if (split) split.registerPanel(canvas, { panelDiv, bar });
+        const renderer = plugin._createFactory();
+        renderer.init(canvas);
+        return { panelDiv, bar, canvas, renderer };
+    });
+}
+
+// Counts note-ons per panel (by the `keys` label) so a MIDI-routing claim can
+// be asserted on *which* instance received the stream.
+function countNoteOns(panels, keys) {
+    const seen = Object.fromEntries(keys.map(key => [key, 0]));
+    panels.forEach((panel, i) => {
+        const original = panel.renderer._handleNoteOn;
+        panel.renderer._handleNoteOn = (midi, velocity) => {
+            seen[keys[i]] += 1;
+            return original(midi, velocity);
+        };
+    });
+    return seen;
+}
+
+// Drives one panel through every lifecycle entry point that reaches the
+// splitscreen helper, so a containment assertion over the call log is a fact
+// about the whole lifecycle and not just about mount: `draw()`
+// (`_renderLatestBundle`), `resize()` (`_applyCanvasDims` -> `_ssPanelChrome`),
+// the first settings open (`_createSettingsPanel` -> `_ssPanelChrome`) and a
+// host canvas replacement (`_rebuildOverlayForCanvas`, which re-resolves
+// chrome, re-injects the gear and restores the settings panel). `mount()`'s
+// init() only covers the first of those, so a helper call introduced in any
+// other path — a `ss.getPanels()` while laying out the overlay, say — would
+// never reach the log and the guard would pass silently. `destroy()` is the
+// one entry point left out here, because it tears the panel down rather than
+// exercising it; the caller destroys before reading the log so teardown is
+// covered too.
+function exercisePanelLifecycle(panel, host, split) {
+    panel.renderer.draw(BUNDLE);
+    panel.renderer.resize(800, 400);
+
+    const gear = [...panel.bar.children, ...panel.panelDiv.children]
+        .find(el => String(el.className).startsWith('btn-piano-settings'));
+    gear.onclick();
+
+    // The host swapping the highway canvas re-mounts the overlay, which is the
+    // other path that re-resolves per-panel chrome. The replacement has to be
+    // registered with the helper first, the way the real host resolves
+    // canvas -> panel index -> panel.div.
+    const replacement = panel.canvas.ownerDocument.createElement('canvas');
+    replacement.clientWidth = 800;
+    replacement.clientHeight = 400;
+    panel.panelDiv.appendChild(replacement);
+    split.registerPanel(replacement, { panelDiv: panel.panelDiv, bar: panel.bar });
+    host.emit('highway:canvas-replaced', { canvas: replacement });
+    return replacement;
+}
 
 function mount(options = {}) {
     const host = createCoreHost(options);
@@ -362,12 +451,12 @@ test('renders on a host with no event bus at all (window-event fallback)', () =>
 
 // ── Optional split-panel host ─────────────────────────────────────────────
 
-test('subscribes to focus changes only when the helper exposes the full surface', () => {
+test('subscribes on init and unsubscribes on destroy whenever the helper has a focus API', () => {
     const partial = { isActive: () => true, isCanvasFocused: () => true };
     const withPartial = mount({ splitscreen: partial });
     withPartial.renderer.destroy();
-    // A partial helper is reported as "not active", so the plugin must not
-    // have subscribed to a focus API it cannot later unsubscribe from.
+    // No focus API to call, so nothing to subscribe to — the wrapper check
+    // never even gets that far.
     assert.equal(typeof partial.onFocusChange, 'undefined', 'fixture has no focus API to call');
 
     const full = createSplitscreenHelper();
@@ -386,26 +475,13 @@ test('only the focused panel receives routed MIDI in split-panel mode', async ()
     const split = createSplitscreenHelper();
     window.slopsmithSplitscreen = split;
 
-    const mountPanel = () => {
-        const canvas = harness.doc.createElement('canvas');
-        canvas.clientWidth = 640;
-        canvas.clientHeight = 360;
-        harness.doc.elementsById.player.appendChild(canvas);
-        const renderer = plugin._createFactory();
-        renderer.init(canvas);
-        return { renderer, canvas };
-    };
-    const left = mountPanel();
-    const right = mountPanel();
+    const panels = mountSplitPanels(plugin, harness, split, 2);
+    const [left, right] = panels;
     split.setFocused(left.canvas);
     await new Promise(resolve => setImmediate(resolve));
     await new Promise(resolve => setImmediate(resolve));
 
-    const seen = { left: 0, right: 0 };
-    const leftOriginal = left.renderer._handleNoteOn;
-    const rightOriginal = right.renderer._handleNoteOn;
-    left.renderer._handleNoteOn = (m, v) => { seen.left += 1; return leftOriginal(m, v); };
-    right.renderer._handleNoteOn = (m, v) => { seen.right += 1; return rightOriginal(m, v); };
+    const seen = countNoteOns(panels, ['left', 'right']);
 
     midiInput.handle.emit([0x90, 60, 100]);
     assert.deepEqual(seen, { left: 1, right: 0 }, 'focused panel is the routing target');
@@ -414,8 +490,235 @@ test('only the focused panel receives routed MIDI in split-panel mode', async ()
     midiInput.handle.emit([0x90, 62, 100]);
     assert.deepEqual(seen, { left: 1, right: 1 }, 'routing follows focus');
 
-    left.renderer.destroy();
-    right.renderer.destroy();
+    for (const panel of panels) panel.renderer.destroy();
+});
+
+// ── Peer floor: the Split Screen focus API (issue #40) ─────────────────────
+//
+// Piano is standalone-compatible — with no split-panel host at all it mounts,
+// draws and routes MIDI. What it cannot do without the peer is route that
+// MIDI by *focus*: with several panels up, only the one the user is looking
+// at may react, and only that one may own the shared synth. That needs Split
+// Screen's focus API, so the peer carries a floor of its own.
+//
+// The floor is feedBack-plugin-splitscreen **1.10.6** — the repository's
+// earliest auditable snapshot (commit `54db8d2`) — where the six focus
+// methods already exist, byte-identical to how they read on `main` today
+// (1.14.21, `aefac76`). Every version run in between (1.10.6 → 1.14.21, 26
+// of them) was also checked to carry the six. Only 1.14.20 carries a git
+// tag, so the manifest `version` is the identity to compare against, the same
+// rule core follows. The two surfaces below are hand-built from the
+// `window.slopsmithSplitscreen = {` literal in each snapshot, extras
+// included.
+//
+// `extras` is the whole post-floor surface a snapshot published beyond the
+// six. The guard is a positive one — the set of methods the plugin actually
+// calls must be a subset of the six — so the property is a fact about
+// observed calls rather than about a hand-typed exclusion list, and it can
+// only ever get stronger as a snapshot adds methods.
+const SPLITSCREEN_PEER_FLOOR = '1.10.6';
+const SPLITSCREEN_CURRENT = '1.14.21';
+const SPLITSCREEN_FOCUS_API = [
+    'isActive', 'isCanvasFocused', 'panelChromeFor',
+    'settingsAnchorFor', 'onFocusChange', 'offFocusChange',
+];
+const SPLITSCREEN_SURFACES = {
+    '1.10.6': { extras: ['panelIndexFor'] },
+    '1.14.21': {
+        extras: [
+            'panelIndexFor', 'getPanels', 'panelName', 'setPanelName', 'setPlayerContext',
+            'beginOfflineRender', 'renderFrameAt', 'endOfflineRender',
+        ],
+    },
+};
+
+test('peer floor: the 1.10.6 surface alone drives per-panel chrome, gear anchoring and focus-routed MIDI', async () => {
+    const midiInput = createMidiDomain();
+    const host = createCoreHost({ midiInput });
+    const harness = installBrowserHarness({ feedBack: host, slopsmith: host });
+    const plugin = loadScreen();
+
+    const floor = SPLITSCREEN_SURFACES[SPLITSCREEN_PEER_FLOOR];
+    const split = createSplitscreenHelper({ extras: floor.extras });
+    window.slopsmithSplitscreen = split;
+    const panels = mountSplitPanels(plugin, harness, split, 2);
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+
+    // Chrome is resolved per panel rather than against the whole player: each
+    // overlay lands in its own panel div, each gear in its own panel bar.
+    for (const panel of panels) {
+        assert.ok(panel.panelDiv.children.some(el => el.className === 'piano-highway-canvas'),
+            'overlay mounted into the panel chrome panelChromeFor() returned');
+        assert.equal(panel.bar.children.filter(el => el.className.startsWith('btn-piano-settings')).length, 1,
+            'settings gear docked in the panel bar settingsAnchorFor() returned');
+    }
+    assert.equal(harness.doc.elementsById.player.children.filter(el => el.className === 'piano-highway-canvas').length, 0,
+        'no overlay fell back to the whole-player mount point');
+    assert.deepEqual(
+        [...new Set(split.calls.filter(([name]) => name === 'panelChromeFor').map(([, canvas]) => canvas))],
+        panels.map(panel => panel.canvas),
+        'each panel asked the helper about its own canvas');
+
+    // Each live instance holds a focus subscription, and releases it on teardown.
+    assert.equal(split.focusListenerCount(), panels.length, 'one focus subscription per panel');
+
+    const seen = countNoteOns(panels, ['left', 'right']);
+    split.setFocused(panels[0].canvas);
+    midiInput.handle.emit([0x90, 60, 100]);
+    assert.deepEqual(seen, { left: 1, right: 0 }, 'only the focused panel takes the note');
+
+    for (const panel of panels) panel.renderer.destroy();
+    assert.equal(split.focusListenerCount(), 0, 'every subscription released on teardown');
+});
+
+test('the current 1.14.21 surface is consumed no further than the floor', async () => {
+    const midiInput = createMidiDomain();
+    const host = createCoreHost({ midiInput });
+    const harness = installBrowserHarness({ feedBack: host, slopsmith: host });
+    const plugin = loadScreen();
+
+    const current = SPLITSCREEN_SURFACES[SPLITSCREEN_CURRENT];
+    const split = createSplitscreenHelper({ extras: current.extras });
+    window.slopsmithSplitscreen = split;
+    const panels = mountSplitPanels(plugin, harness, split, 2);
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+
+    const seen = countNoteOns(panels, ['left', 'right']);
+    split.setFocused(panels[1].canvas);
+    midiInput.handle.emit([0x90, 62, 100]);
+    assert.deepEqual(seen, { left: 0, right: 1 }, 'routing follows focus on the current surface too');
+
+    // Every lifecycle entry point that can reach the helper, teardown included,
+    // before the call log is read — otherwise a post-floor call hiding in the
+    // draw, resize, settings, overlay-rebuild or destroy path would never be
+    // recorded here.
+    for (const panel of panels) exercisePanelLifecycle(panel, host, split);
+    for (const panel of panels) panel.renderer.destroy();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(split.focusListenerCount(), 0,
+        'teardown reached the helper, so the reads below cover its calls too');
+
+    // What makes 1.10.6 the floor: the plugin reaches for nothing at all
+    // outside the six methods the floor already ships, so the current
+    // snapshot's extra eight methods are inert to it. Stated as positive
+    // containment of the observed calls rather than as an exclusion list, so
+    // the guarantee is a fact about what the plugin did — a post-floor
+    // dependency fails here instead of being excused by the current
+    // snapshot, and the 1.10.6 test above already shows the same routing with
+    // only the floor's surface present.
+    const called = [...new Set(split.calls.map(([name]) => name))];
+    assert.ok(called.length > 0, 'the plugin did consult the helper at all');
+    for (const name of called) {
+        assert.ok(SPLITSCREEN_FOCUS_API.includes(name),
+            `the plugin called \`${name}\`, which the ${SPLITSCREEN_PEER_FLOOR} floor does not publish`);
+    }
+});
+
+// A partial focus surface is not one behaviour but two, and which one you get
+// depends on *which* method is missing. The three wrappers
+// (`_ssPanelChrome` / `_ssSettingsAnchor` / `_ssIsCanvasFocused`) are
+// all-or-nothing: they short-circuit on `_ssActive()`, so a surface missing
+// any of them never has chrome, anchoring or focus asked of it. The
+// subscribe/unsubscribe pair is not gated on `_ssActive()` at all — `init()`
+// and `destroy()` check only that both halves exist — so a surface missing
+// something else still gets `onFocusChange`, and still releases it on
+// teardown, which is the property that actually matters. Each shape has its
+// own fixture below: they degrade identically and are consumed differently.
+function assertChromeFellBackToSharedRail(harness, host, panels) {
+    const gearsIn = (el) => el.children.filter(child => child.className.startsWith('btn-piano-settings')).length;
+    assert.equal(harness.doc.elementsById.player.children.filter(el => el.className === 'piano-highway-canvas').length,
+        panels.length, 'each overlay fell back to the whole-player mount point');
+    assert.equal(gearsIn(host.ui.playerControlSlot()), panels.length, 'gears stacked in the shared control rail');
+    for (const panel of panels) {
+        assert.equal(gearsIn(panel.panelDiv) + gearsIn(panel.bar), 0, 'nothing docked inside the panel');
+    }
+}
+
+test('a partial surface missing the unsubscribe half is probed with isActive() and then left entirely alone', async () => {
+    const midiInput = createMidiDomain();
+    const host = createCoreHost({ midiInput });
+    const harness = installBrowserHarness({ feedBack: host, slopsmith: host });
+    const plugin = loadScreen();
+
+    // Five of the six: `offFocusChange` is missing, so a subscribe could not
+    // be undone. This is the version skew the full-surface check exists for.
+    const split = createSplitscreenHelper({ omit: ['offFocusChange'] });
+    assert.equal(typeof split.offFocusChange, 'undefined', 'fixture really is missing the unsubscribe half');
+    window.slopsmithSplitscreen = split;
+    const panels = mountSplitPanels(plugin, harness, split, 2);
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+
+    // The subscribe is gated on the pair, so losing one half costs the whole
+    // pair: isActive() is all this surface is asked for.
+    assert.deepEqual([...new Set(split.calls.map(([name]) => name))], ['isActive'],
+        'a surface that cannot be unsubscribed from is never subscribed to');
+    assert.equal(split.focusListenerCount(), 0, 'no focus subscription without a matching unsubscribe');
+
+    // Degradation, stated as behavior rather than as "safe": the overlays fall
+    // back to the whole-player mount and the gears to the shared control rail
+    // instead of each panel's own chrome and bar.
+    assertChromeFellBackToSharedRail(harness, host, panels);
+
+    for (const panel of panels) panel.renderer.destroy();
+});
+
+test('a partial surface missing a chrome lookup still subscribes, and still unsubscribes', async () => {
+    const midiInput = createMidiDomain();
+    const host = createCoreHost({ midiInput });
+    const harness = installBrowserHarness({ feedBack: host, slopsmith: host });
+    const plugin = loadScreen();
+
+    // The other shape: `panelChromeFor` is gone but the focus pair is intact.
+    // `init()` does not consult `_ssActive()` before subscribing, so this
+    // surface is used for the subscription and only for that.
+    const split = createSplitscreenHelper({ omit: ['panelChromeFor'] });
+    assert.equal(typeof split.onFocusChange, 'function', 'fixture really does have the subscribe pair');
+    window.slopsmithSplitscreen = split;
+    const panels = mountSplitPanels(plugin, harness, split, 2);
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+
+    // The wrappers are all-or-nothing: no chrome lookup, no settings anchor,
+    // no focus probe — only the subscription, whose halves are symmetric.
+    assert.deepEqual([...new Set(split.calls.map(([name]) => name))], ['isActive', 'onFocusChange'],
+        'chrome and focus stay untouched on a partial surface; only the symmetric subscription is taken');
+    assert.equal(split.focusListenerCount(), panels.length, 'one focus subscription per panel');
+
+    assertChromeFellBackToSharedRail(harness, host, panels);
+
+    for (const panel of panels) panel.renderer.destroy();
+    assert.deepEqual([...new Set(split.calls.map(([name]) => name))], ['isActive', 'onFocusChange', 'offFocusChange'],
+        'every subscription released on teardown');
+    assert.equal(split.focusListenerCount(), 0, 'no listener outlives its instance');
+});
+
+test('with no split-panel host at all the board still renders, but MIDI follows mount order', async () => {
+    const midiInput = createMidiDomain();
+    const host = createCoreHost({ midiInput });
+    const harness = installBrowserHarness({ feedBack: host, slopsmith: host });
+    const plugin = loadScreen();
+
+    // No helper on window at all — the standalone case, which must keep working.
+    const panels = mountSplitPanels(plugin, harness, null, 2);
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(window.slopsmithSplitscreen, undefined, 'no peer on window');
+
+    for (const panel of panels) assert.doesNotThrow(() => panel.renderer.draw(BUNDLE));
+
+    // Every instance resolves itself as focused (the main-player fast path),
+    // so the routing slot lands on whichever panel initialised last. With one
+    // panel that is the only panel and the answer is right; with several it is
+    // why the peer is required for focused multi-panel MIDI rather than merely
+    // nice to have.
+    const seen = countNoteOns(panels, ['left', 'right']);
+    midiInput.handle.emit([0x90, 60, 100]);
+    assert.deepEqual(seen, { left: 0, right: 1 }, 'the last-mounted panel takes the stream');
+
+    for (const panel of panels) panel.renderer.destroy();
 });
 
 // ── Host-surface declaration drift (issue #43) ─────────────────────────────

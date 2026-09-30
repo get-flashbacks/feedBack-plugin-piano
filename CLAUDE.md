@@ -79,12 +79,24 @@ Under splitscreen, multiple panels can run a Piano instance simultaneously,
 but only one keyboard input source (MIDI, or the on-screen keyboard) should
 ever be "live" at a time — the one the user is currently looking at/using.
 `window.slopsmithSplitscreen` exposes a small helper surface for this;
-Piano is the only plugin observed consuming it end-to-end. The full
-six-method surface (`isActive`/`isCanvasFocused`/`panelChromeFor`/
-`settingsAnchorFor`/`onFocusChange`/`offFocusChange`) is verified present
-as of `feedback-plugin-splitscreen` **v1.14.5**; not a hard requirement
-per the full-surface-validation design described next — but this is the
-minimum version this integration has actually been checked against.
+Piano is the only plugin observed consuming it end-to-end.
+
+Split Screen is an **optional peer** — standalone Piano consumes none of it,
+and nothing in this integration is a precondition for the board to render.
+The peer floor is **`feedBack-plugin-splitscreen` 1.10.6** — the repository's
+earliest auditable snapshot (commit `54db8d2`) — where the full six-method
+surface (`isActive` / `isCanvasFocused` / `panelChromeFor` /
+`settingsAnchorFor` / `onFocusChange` / `offFocusChange`) is already
+published. It was audited at that snapshot and at `main` (1.14.21,
+`aefac76`): the six methods are byte-identical, and so is every version run
+in between (26 of them, 1.10.6 → 1.14.21). The plugin calls nothing beyond
+the six — current splitscreen publishes eight more, and the surface map in
+`tests/host-compat.test.js` fails if a post-floor method is ever required.
+Splitscreen tags only 1.14.20, so the manifest `version` is the identity to
+compare against, the same rule core follows. **The floor is a two-snapshot
+source audit plus four contract fixtures, not a runtime certification of the
+builds in between** — a partial surface is a supported state, not a
+violation of the floor.
 
 `_ssActive()` (see "Splitscreen helper wrappers" in `screen.js`) validates
 the **entire** surface this plugin needs before treating splitscreen as
@@ -96,6 +108,29 @@ active," which falls the plugin back to the main-player single-instance
 fast path rather than reaching a half-broken state where focus never lands
 on any instance and MIDI routing silently dies.
 
+The fallback is fail-soft, but calling it merely *safe* undersells it. What
+actually changes under a real split-panel host:
+
+- **Focus stops being authoritative.** `_ssIsCanvasFocused()` returns `true`
+  unconditionally, so every instance claims focus and the module-level
+  `_activeInstance` routing slot lands on whichever panel initialised last.
+  Played notes and their scoring go to that panel, not the one the user is
+  looking at. Nothing is dropped and nothing throws.
+- **Chrome falls back to the shared player.** `_ssPanelChrome()` and
+  `_ssSettingsAnchor()` return `null`, so the overlay canvas and settings
+  panel mount against `#player` (`_createOverlayCanvas`,
+  `_createSettingsPanel`) and the gear docks in `ui.playerControlSlot()` /
+  `#player-controls` (`_injectSettingsGear`) — N panels stack N overlays and
+  N gears in the same place.
+- **Chrome and focus are all-or-nothing.** `_ssActive()` gates the three
+  wrappers, so a partial surface is never asked for chrome, anchoring or
+  focus — only `isActive()` is called for those. The subscribe/unsubscribe
+  pair is *not* gated on `_ssActive()`: `init()`/`destroy()` check only that
+  both halves exist, so a surface missing something *other* than
+  `offFocusChange` still subscribes (and still releases, symmetrically). What
+  that pair has to guarantee is symmetry, not authority — a listener firing
+  while every panel reports itself focused changes nothing. Pinned by both
+  partial-surface fixtures in `tests/host-compat.test.js`, one per shape.
 - **Subscribe** — `init()` calls `ss.onFocusChange(_onFocusChange)` only
   when *both* `onFocusChange` and `offFocusChange` exist on the helper. A
   subscribe without a matching unsubscribe path would leak the listener
@@ -129,7 +164,13 @@ splitscreen panel is live" behavior, copy this pattern (full surface
 validation, subscribe/unsubscribe symmetry, the destroyed-instance guard)
 rather than reaching for `window.slopsmithSplitscreen` directly — the
 partial-surface fallback is what keeps this safe across splitscreen
-version skew.
+version skew. **The floor is recorded in prose only.** feedBack's manifest
+schema (`docs/plugin-manifest.schema.json`) has no feature-scoped
+optional-dependency field, and a `capabilities.*` block is closed to unknown
+keys, so `plugin.json` cannot carry the peer version; the executable record
+is the absent / partial / floor / current fixture set in
+`tests/host-compat.test.js`, whose surface map is the authority on which
+methods the floor covers.
 
 ## Versioning
 
@@ -145,9 +186,12 @@ The declared minimum host is **feedBack core v0.3.0-alpha.1** (issue #39) —
 the first core commit whose `VERSION` reads `0.3.0-alpha.1` (`803bd0c`),
 the earliest snapshot carrying every host API this plugin consumes. Core
 publishes no git tags, so `VERSION` is the identity to compare against.
-README.md's "Requirements" section carries the full surface table plus the
+README.md's "Requirements" section carries the full surface table, the
 three independently-checked requirements (core version, Web MIDI
-browser/permission support, WebAudioFont network/audio prerequisites).
+browser/permission support, WebAudioFont network/audio prerequisites), and
+the optional Split Screen peer floor (README "Requirements" item 4,
+"*Peer plugin (optional): Split Screen, for focused multi-panel MIDI*"),
+which the integration below implements.
 
 `tests/host-compat.test.js` is the executable half of that declaration: its
 fixtures reproduce the alpha.1 host surface (event bus, chart bundle,
@@ -203,11 +247,12 @@ node --test tests/*.test.js        # node:test — no package.json/build step in
 ```
 
 Two suites: `tests/screen.test.js` (helper and rendering coverage) and
-`tests/host-compat.test.js` (the minimum-host contract). Both share the
-DOM/`window` stub in `tests/harness.js` — `installBrowserHarness({ feedBack,
-slopsmith, slopsmithSplitscreen, storage })` — so host-contract fixtures
-(the `midi-input` domain, the event bus, the splitscreen helper) live in
-the suites rather than in the harness itself.
+`tests/host-compat.test.js` (the minimum-host and peer-floor contracts).
+Both share the DOM/`window` stub in `tests/harness.js` —
+`installBrowserHarness({ feedBack, slopsmith, slopsmithSplitscreen,
+storage })` — so host-contract fixtures (the `midi-input` domain, the event
+bus, the splitscreen helper) live in the suites rather than in the harness
+itself.
 
 `screen.js` exports a Node-only test hook (`module.exports`, guarded by
 `typeof module !== 'undefined'`) alongside the browser `window.*Viz_piano`

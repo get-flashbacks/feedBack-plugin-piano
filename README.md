@@ -20,7 +20,7 @@ A plugin for [Slopsmith](https://github.com/got-feedback/feedback) that replaces
 
 ## Requirements
 
-These are three independent requirements — satisfying one does not imply the others. Core compatibility, browser support for MIDI, and network access for the built-in synth are checked separately below.
+These are four independent prerequisites — satisfying one does not imply the others. The first three are requirements: core compatibility, browser support for MIDI, and network access for the built-in synth. The fourth is an optional peer plugin that decides what Piano can do when several panels are open at once. Each is checked separately below.
 
 ### 1. Host: feedBack core v0.3.0-alpha.1 or newer
 
@@ -45,11 +45,11 @@ Rows are grouped by what the plugin can *do* when the host provides them, not by
 | `feedBack.uiVersion` + `feedBack.ui.playerControlSlot()` | Settings gear placement in the v3 player |
 | `window.highway.resize()` *(optional)* | Nudges the host's measure pass after the plugin changes player-control layout |
 
-`tests/host-compat.test.js` pins this floor as an executable contract: each fake host in that file reproduces the rows above, and the renderer must mount, draw, route MIDI, survive pause/seek/song changes, and tear down against it. The 13 tests run only against those fixtures, never against a live core; the evidence for `0.3.0-alpha.2` (`3a4dd7a`) is a source audit of the same APIs, whose surface is a superset of alpha.1's — the two `setRenderer` / `matchesArrangement` sites moved from `static/app.js` to `static/js/viz.js`, with no change to the published contract. `tools/verify-host-surface.js` re-checks both audited refs and current upstream `main` on a schedule, so core drifting from this table fails loudly.
+`tests/host-compat.test.js` pins this floor as an executable contract: each fake host in that file reproduces the rows above, and the renderer must mount, draw, route MIDI, survive pause/seek/song changes, and tear down against it. Every test in that file runs only against those fixtures, never against a live core; the evidence for `0.3.0-alpha.2` (`3a4dd7a`) is a source audit of the same APIs, whose surface is a superset of alpha.1's — the two `setRenderer` / `matchesArrangement` sites moved from `static/app.js` to `static/js/viz.js`, with no change to the published contract. `tools/verify-host-surface.js` re-checks both audited refs and current upstream `main` on a schedule, so core drifting from this table fails loudly.
 
 This is a source-level compatibility floor, not a runtime certification of every historical snapshot: no test here claims that all builds older than alpha.1 fail, only that alpha.1 is the earliest one examined that provides everything the plugin needs.
 
-**Visualization-only fallback.** The renderer and MIDI input have different requirements. The scrolling piano view works on a visualization-only host — a core with no `midi-input` domain, or one whose domain is not v1, still renders the board; what is lost is everything reachable only from a played note — the MIDI device list, note-on/note-off, the synth voice it triggers, and hit detection — and the settings panel shows an empty device list. The synth is a monitor for what you play, not a backing track: nothing in the plugin sounds a note on its own. Likewise, a host with no event bus falls back to plain `window` events, and a host without the `window.slopsmithSplitscreen` helper runs the single-panel focus path.
+**Visualization-only fallback.** The renderer and MIDI input have different requirements. The scrolling piano view works on a visualization-only host — a core with no `midi-input` domain, or one whose domain is not v1, still renders the board; what is lost is everything reachable only from a played note — the MIDI device list, note-on/note-off, the synth voice it triggers, and hit detection — and the settings panel shows an empty device list. The synth is a monitor for what you play, not a backing track: nothing in the plugin sounds a note on its own. Likewise, a host with no event bus falls back to plain `window` events, and a host without the full `window.slopsmithSplitscreen` helper runs the single-panel focus path (see requirement 4).
 
 ### 2. Browser: Web MIDI support for MIDI keyboard input
 
@@ -62,6 +62,31 @@ MIDI features are optional — the piano view works without a MIDI keyboard.
 ### 3. Network: WebAudioFont for the built-in synthesizer
 
 The instrument playback is **WebAudioFont**-based. On first use the plugin loads `WebAudioFontPlayer.js` and the soundfont data from `surikov.github.io`, so built-in sound needs network access (or a reachable cache) and an `AudioContext` the browser will allow to start — most browsers block audio until a user gesture, so the first note may need a click on the player. If either the script or the soundfont fails to load, the plugin logs a warning and everything except audio keeps working; note visuals, MIDI input and scoring are unaffected.
+
+### 4. Peer plugin (optional): Split Screen, for focused multi-panel MIDI
+
+Piano needs no peer plugin. There is nothing extra to install for the board, MIDI input, or scoring. [Split Screen](https://github.com/get-flashbacks/feedBack-plugin-splitscreen) is needed for one thing: **focused multi-panel MIDI routing**.
+
+Under Split Screen several panels can each run a Piano instance, but a MIDI keyboard is a single browser-wide input. Only the panel the user is looking at may react to it, and only that panel may drive the shared synth. That decision comes from Split Screen's `window.slopsmithSplitscreen` helper, whose six methods this plugin consumes:
+
+| Peer API | Used for |
+|---|---|
+| `isActive()` | Whether split panels are live at all — `false` in the main player |
+| `isCanvasFocused(canvas)` | Whether *this* panel is the focused one, which decides MIDI routing |
+| `panelChromeFor(canvas)` | The panel element the overlay canvas and settings panel mount into |
+| `settingsAnchorFor(canvas)` | That panel's control bar, where the settings gear docks |
+| `onFocusChange(fn)` / `offFocusChange(fn)` | Subscribe / unsubscribe, so held notes release when focus moves away |
+
+**Peer floor: Split Screen 1.10.6.** That is the earliest auditable snapshot of that helper (commit `54db8d2`), and all six methods are already there, byte-identical to how they read on `main` (1.14.21, `aefac76`) — every version in between carries them too. Splitscreen tags only 1.14.20, so compare the manifest `version` — the same identity rule core follows for itself. Like the core floor above, this is a source-level audit of two snapshots plus executable fixtures, not a runtime certification of every build in between.
+
+**Degraded behavior on a partial or older surface.** The plugin treats anything less than the full six as "Split Screen is not present": panel chrome, settings anchoring and the focus probe are all-or-nothing, so none of them are asked of a partial surface and every panel falls back to resolving itself as focused. (The focus *subscription* is the one exception — it is taken whenever both `onFocusChange` and `offFocusChange` exist, and released on teardown, because a listener that can always be removed is harmless even while focus is not authoritative.) That is fail-soft, but under split panels it changes behavior rather than only avoiding errors:
+
+- **Focus stops being authoritative.** Every panel resolves as focused, so a played note lands on whichever panel initialised last, not the one you are looking at. Note rendering is unaffected; the key-press feedback and its scoring go to the wrong panel.
+- **Chrome falls back to the shared player.** The overlay canvas and settings panel mount against the whole `#player` instead of a panel, and the settings gear docks in the shared control rail — with N panels open you get N overlays and N gears stacked in the same place.
+
+`tests/host-compat.test.js` pins every state — no helper at all, a partial surface in each of its two shapes, the 1.10.6 floor, and the current 1.14.21 surface — so the fallback is a tested contract rather than a hope. The current-surface test drives each panel through its whole lifecycle (mount, draw, resize, the first settings open, a host canvas replacement, then `destroy()`) before reading the helper's call log, so a dependency on a method the floor does not publish fails the test from whichever code path introduced it.
+
+**Where the floor is recorded.** Here, in `CLAUDE.md`, and in those tests — feedBack's plugin manifest has no feature-scoped optional-dependency field to declare it in. Audited against core's `docs/plugin-manifest.schema.json` at `af29496` (its last change as of `main` `ed0db38`): the top level carries no `requires` / `peerDependencies` key, and a `capabilities.*` block is closed to unknown fields (`additionalProperties: false`). So the floor cannot live in `plugin.json` until the host learns to read one; if a future core adds such a field, this is the value it should carry.
 
 ## Installation
 
