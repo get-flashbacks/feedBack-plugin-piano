@@ -1,0 +1,29 @@
+name: host-surface-drift
+
+# tests/host-compat.test.js pins the plugin's behavior against hand-written
+# fixtures, so it cannot notice core changing: rename `logicalSourceKey`, move
+# `setRenderer` again, or drop `ui.playerControlSlot()` and every test still
+# passes. This job closes that gap from the other side — it re-reads a live
+# core checkout for every API README.md's host surface table declares, and
+# diffs core's VERSION against the two audited refs, so the compatibility floor
+# in README.md degrades loudly instead of silently.
+#
+# It clones core, so it needs the network. Gating every PR on that would flake
+# on transient GitHub or DNS failures, so it runs on a schedule (and on demand)
+# the way sri-drift.yml does. The per-PR half is tests/host-compat.test.js plus
+# the network-free table-parity check in tools/verify-host-surface.js.
+on:
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+jobs:
+  verify-host-surface:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Re-check the declared host surface against core
+        run: node tools/verify-host-surface.js
