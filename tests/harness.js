@@ -259,8 +259,6 @@ function initRendererWithHarness(options = {}) {
 }
 
 module.exports = {
-    createStyle,
-    createElement,
     createDocument,
     installBrowserHarness,
     advanceClock,

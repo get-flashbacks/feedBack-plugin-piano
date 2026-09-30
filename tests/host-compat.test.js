@@ -1,15 +1,17 @@
 'use strict';
 // Host-compatibility suite (issue #39).
 //
-// The declared minimum host is feedBack v0.3.0-alpha.1 — the earliest
-// core snapshot whose source carries every API this plugin consumes
+// The declared minimum host is feedBack v0.3.0-alpha.1 — the first core
+// commit whose `VERSION` reads `0.3.0-alpha.1` (`803bd0c`), and the
+// earliest snapshot whose source carries every API this plugin consumes
 // (`window.feedBackViz_<id>` factory lookup, the setRenderer lifecycle,
 // the chart-bundle fields, the `midi-input` v1 domain, and the legacy
 // `window.slopsmith` alias). This suite pins that floor as an executable
-// contract: each fake host below reproduces the alpha.1 surface exactly as
-// core defines it, and the renderer must mount, draw, route MIDI, and tear
-// down against it. A host that drops any of these surfaces is expected to
-// degrade, not crash — see the visualization-only fallback tests.
+// contract: each fake host below reproduces every required row of README.md's
+// host surface table as core defines it at that ref, and the renderer must
+// mount, draw, route MIDI, and tear down against it. A host that drops any
+// of these surfaces is expected to degrade, not crash — see the
+// visualization-only fallback tests.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { installBrowserHarness, loadScreen, initRendererWithHarness } = require('./harness');
@@ -20,11 +22,21 @@ const { installBrowserHarness, loadScreen, initRendererWithHarness } = require('
 // `window.slopsmith` alias core assigns to the same object at app.js
 // `window.slopsmith = window.feedBack;`). `on`/`off` are the event bus the
 // renderer subscribes to; `midiInput` is the v1 domain object the plugin
-// reads through the legacy alias.
+// reads through the legacy alias; `uiVersion` + `ui.playerControlSlot()`
+// are the v3 chrome rail the settings gear mounts into instead of
+// `#player-controls`.
 function createCoreHost(options = {}) {
     const listeners = new Map();
     const host = {
         version: 1,
+        uiVersion: 'v3',
+        ui: {
+            // The slot node is created lazily: createCoreHost() runs before
+            // installBrowserHarness() has installed the current `document`.
+            playerControlSlot() {
+                return host.v3ControlSlot || (host.v3ControlSlot = document.createElement('div'));
+            },
+        },
         on(name, fn) {
             if (!listeners.has(name)) listeners.set(name, new Set());
             listeners.get(name).add(fn);
@@ -94,6 +106,8 @@ const BUNDLE = {
     chords: [],
     beats: [{ time: 0, measure: 1 }],
     chordTemplates: [],
+    toneBase: 'Keys',
+    toneChanges: [{ t: 0, name: 'Keys' }],
 };
 
 function mount(options = {}) {
@@ -110,10 +124,10 @@ function mount(options = {}) {
 // ── Renderer lifecycle ────────────────────────────────────────────────────
 
 test('mounts, draws, resizes and tears down against the minimum-host surface', () => {
-    const { renderer, harness, canvas, plugin } = mount();
+    const { renderer, harness, canvas, plugin, host } = mount();
 
-    // The factory is discoverable under both globals the host's viz picker
-    // and its legacy lookup walk check.
+    // Core's picker resolves `feedBackViz_`; the legacy `slopsmithViz_` name
+    // is the export splitscreen falls back to. Both must name one function.
     assert.equal(typeof window.feedBackViz_piano, 'function');
     assert.equal(window.slopsmithViz_piano, window.feedBackViz_piano);
     assert.equal(plugin._createFactory().contextType, '2d',
@@ -124,8 +138,19 @@ test('mounts, draws, resizes and tears down against the minimum-host surface', (
         .find(el => el.className === 'piano-highway-canvas');
     assert.ok(overlay, 'overlay canvas mounted');
 
+    // The v3 chrome rail wins over #player-controls as the gear's host.
+    const gearsIn = (el) => el.children.filter(child => child.className.startsWith('btn-piano-settings'));
+    assert.equal(gearsIn(host.v3ControlSlot).length, 1, 'settings gear mounted into ui.playerControlSlot()');
+    assert.equal(gearsIn(harness.doc.elementsById['player-controls']).length, 0,
+        'settings gear did not fall back to #player-controls');
+
+    // Auto tone is on by default, so this draw also reads the bundle's
+    // declared toneChanges/toneBase rather than the no-tone fallback.
+    const ctx = overlay.getContext('2d');
+    ctx.fillTextCalls.length = 0;
     renderer.draw(BUNDLE);
-    assert.ok(overlay.getContext('2d').fillTextCalls.length >= 0);
+    assert.ok(ctx.fillTextCalls.some(call => /^[A-G]$|^C-?\d+$/.test(call.text)),
+        'draw() should paint the keyboard labels');
 
     assert.doesNotThrow(() => renderer.resize(800, 400));
 
@@ -148,10 +173,16 @@ test('subscribes to host highway events through the core event bus and unsubscri
 
 test('a draw() before init and a resize() after destroy are no-ops rather than throws', () => {
     const { renderer, plugin } = mount();
+
+    // Nothing has been initialised on this instance yet: both calls must
+    // bail out rather than reaching for the overlay that doesn't exist.
+    const unprimed = plugin._createFactory();
+    assert.doesNotThrow(() => unprimed.draw(BUNDLE));
+    assert.doesNotThrow(() => unprimed.resize(640, 360));
+
     renderer.destroy();
     assert.doesNotThrow(() => renderer.draw(BUNDLE));
     assert.doesNotThrow(() => renderer.resize(640, 360));
-    assert.ok(plugin);
 });
 
 // ── Pause / seek / song change ────────────────────────────────────────────
@@ -191,14 +222,20 @@ test('isReady false blanks the board and the false->true edge resets per-song st
     assert.match(accuracy(), /Accuracy: 100%/);
 
     // Song change: the host drops isReady while the new chart streams in.
+    ctx.fillTextCalls.length = 0;
     renderer.draw({ isReady: false, currentTime: 0, notes: [], chords: [], beats: [] });
+    assert.equal(ctx.fillTextCalls.length, 0, 'an unready chart paints nothing');
     assert.doesNotThrow(() => renderer.draw(BUNDLE));
 
-    // Scoring for the new song starts clean (a stale 100% would survive only
-    // if the isReady edge failed to reset).
+    // Scoring for the new song starts clean. The HUD is only painted once
+    // there is something to score, so re-hit the chart's note and pin the
+    // exact counters: a stale 100% from the old chart would read 2/2 with a
+    // streak of 2, and a HUD that stopped rendering would read `undefined`.
     ctx.fillTextCalls.length = 0;
+    renderer._handleNoteOn(60, 100);
     renderer.draw(BUNDLE);
-    assert.ok(!/Accuracy: 100%/.test(String(accuracy())), 'scoring must reset on a new chart');
+    assert.match(accuracy(), /Accuracy: 100%.*Streak: 1.*Best: 1.*1\/1$/,
+        'scoring must reset on a new chart');
 
     renderer.destroy();
 });
@@ -207,7 +244,7 @@ test('isReady false blanks the board and the false->true edge resets per-song st
 
 test('discovers, opens and routes notes from a v1 midi-input domain', async () => {
     const midiInput = createMidiDomain();
-    const { renderer } = mount({ midiInput, storage: { piano_auto_tone: 'false' } });
+    const { renderer, host } = mount({ midiInput, storage: { piano_auto_tone: 'false' } });
 
     // Discovery is async; drain the microtask queue the way the host's own
     // event loop would before the test asserts.
@@ -216,7 +253,15 @@ test('discovers, opens and routes notes from a v1 midi-input domain', async () =
 
     assert.ok(midiInput.calls.some(([name]) => name === 'discover'), 'discover() is the permission boundary');
     assert.ok(midiInput.calls.some(([name]) => name === 'open'), 'open-source session requested');
+    // The domain identifies a device by its logicalSourceKey, so opening a
+    // session without one selects nothing.
+    assert.deepEqual(
+        midiInput.calls.filter(([name]) => name === 'open'),
+        [['open', 'web-midi::d1']],
+        'the session is opened by the source key the host published');
     assert.equal(midiInput.handle.listenerCount(), 1, 'handle listener installed once the session is open');
+    assert.equal(host.listenerCount('midi-input:sources-changed'), 1,
+        'plug/unplug reconciliation subscribed on the bus once discovery resolved');
 
     const seen = [];
     const noteOn = renderer._handleNoteOn;
@@ -297,7 +342,10 @@ test('a non-v1 midi domain is treated as absent, not mis-consumed', () => {
 });
 
 test('renders on a host with no event bus at all (window-event fallback)', () => {
-    const harness = installBrowserHarness({ feedBack: { on() { throw new Error('no bus'); } } });
+    // A host that publishes no bus at all: the plugin must route through
+    // plain `window` events. (A bus that offers `on` but no `off` takes the
+    // same path — that half-surface is covered in screen.test.js.)
+    const harness = installBrowserHarness({ feedBack: { version: 1 } });
     const plugin = loadScreen();
     const renderer = plugin._createFactory();
     const canvas = harness.doc.createElement('canvas');

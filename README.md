@@ -24,28 +24,34 @@ These are three independent requirements — satisfying one does not imply the o
 
 ### 1. Host: feedBack core v0.3.0-alpha.1 or newer
 
-Piano Highway declares a **minimum host of feedBack v0.3.0-alpha.1**. That is the earliest tagged core snapshot whose source carries every API this plugin consumes:
+Piano Highway declares a **minimum host of feedBack v0.3.0-alpha.1** — the first core commit whose `VERSION` file reads `0.3.0-alpha.1` (commit `803bd0c`), and the earliest snapshot whose source carries every API this plugin consumes. Core publishes no git tags, so `VERSION` (surfaced by core's version endpoint) is the identity to compare against.
+
+Every row below is required unless it says *optional*: optional rows are used best-effort behind a `typeof` guard, so a host that drops one degrades quietly instead of failing.
 
 | Host API | Used for |
 |---|---|
-| `window.feedBackViz_<id>` factory global (+ legacy `window.slopsmithViz_` alias) | Renderer discovery by the visualization picker |
+| `window.feedBackViz_<id>` factory global | Renderer discovery by the visualization picker — core's picker resolves this name and no other. `window.slopsmithViz_<id>` is the same function under its legacy export name, kept for splitscreen's `VIZ_FACTORY_PREFIXES` fallback, which core itself never reads |
 | `setRenderer` lifecycle: `contextType`, `init`, `draw`, `resize`, `destroy` | Mounting and teardown |
 | `matchesArrangement(songInfo)` | Auto-mode arrangement matching |
 | Chart bundle fields: `isReady`, `currentTime`, `notes`, `chords`, `beats`, `chordTemplates`, `toneChanges`, `toneBase` | Rendering, chord labels, measure-aware retargeting, auto tone |
 | `songInfo.has_notation` / `arrangements` / `arrangement_index` | Yielding to notation-only visualizations |
 | Event bus (`window.feedBack.on` / `.off`, plus the legacy `window.slopsmith` alias) and `highway:canvas-replaced` / `highway:visibility` | Overlay re-sync on host canvas replacement and visibility changes |
+| `midi-input:sources-changed` on that bus | MIDI device plug/unplug reconciliation |
 | `midi-input` domain **v1** via `window.slopsmith.midiInput` — `discover`, `listSources`, `select`, `open`, `close`, `logicalSourceKey` | MIDI keyboard input |
 | `feedBack.uiVersion` + `feedBack.ui.playerControlSlot()` | Settings gear placement in the v3 player |
+| `window.highway.resize()` *(optional)* | Nudges the host's measure pass after the plugin changes player-control layout |
 
-`tests/host-compat.test.js` pins this floor as an executable contract: each fake host in that file reproduces the alpha.1 surface, and the renderer must mount, draw, route MIDI, survive pause/seek/song changes, and tear down against it. All 13 tests also pass against the current core (v0.3.0-alpha.2, commit `3a4dd7a`), whose surface is a superset — the two `setRenderer` / `matchesArrangement` sites moved from `static/app.js` to `static/js/viz.js`, with no change to the published contract.
+`tests/host-compat.test.js` pins this floor as an executable contract: each fake host in that file reproduces every required row above, and the renderer must mount, draw, route MIDI, survive pause/seek/song changes, and tear down against it. The 13 tests run only against those fixtures, never against a live core; the evidence for `0.3.0-alpha.2` (`3a4dd7a`) is a source audit of the same APIs, whose surface is a superset of alpha.1's — the two `setRenderer` / `matchesArrangement` sites moved from `static/app.js` to `static/js/viz.js`, with no change to the published contract.
 
 This is a source-level compatibility floor, not a runtime certification of every historical snapshot: no test here claims that all builds older than alpha.1 fail, only that alpha.1 is the earliest one examined that provides everything the plugin needs.
 
-**Visualization-only fallback.** The renderer and MIDI input have different requirements. The scrolling piano view works on a visualization-only host — a core with no `midi-input` domain, or one whose domain is not v1, still renders the board, scores notes and plays the synth; only the MIDI device list, the note-on/note-off input and hit detection are unavailable, and the settings panel shows an empty device list. Likewise, a host with no event bus falls back to plain `window` events, and a host without the `window.slopsmithSplitscreen` helper runs the single-panel focus path.
+**Visualization-only fallback.** The renderer and MIDI input have different requirements. The scrolling piano view works on a visualization-only host — a core with no `midi-input` domain, or one whose domain is not v1, still renders the board and plays the synth; only the MIDI device list, the note-on/note-off input and hit detection are unavailable, and the settings panel shows an empty device list. Likewise, a host with no event bus falls back to plain `window` events, and a host without the `window.slopsmithSplitscreen` helper runs the single-panel focus path.
 
-### 2. Browser: Chrome or Edge for MIDI keyboard input
+### 2. Browser: Web MIDI support for MIDI keyboard input
 
-MIDI input needs the **Web MIDI API**, which Firefox does not implement. The permission prompt is also part of this requirement: it fires on first use of the device list (core's `discover()` is the permission boundary, calling `requestMIDIAccess()`), so a denied or dismissed prompt leaves MIDI unavailable until the user re-allows it in the browser's site settings. Chrome may also require a secure context (HTTPS, or `localhost`).
+MIDI input needs the **Web MIDI API**, which every implementing browser exposes only in a **secure context** (HTTPS, or `localhost`). Chrome and Edge implement it; Safari does not. Firefox implements it from version 108, where the first `requestMIDIAccess()` call with a MIDI device attached prompts the user to install a Site Permission Add-On — without it the API stays unavailable. Core's `discover()` is the permission boundary, i.e. what calls `requestMIDIAccess()`.
+
+The permission prompt is part of the requirement: a denied or dismissed prompt leaves MIDI unavailable until the user re-allows it in the browser's site settings, and a `midi` Permissions-Policy header that excludes this origin rejects the call outright. Chrome and Edge are the browsers this plugin is tested against; Firefox is expected to work as described but is not covered by the test suite.
 
 MIDI features are optional — the piano view works without a MIDI keyboard.
 
