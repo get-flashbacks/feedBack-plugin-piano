@@ -4,11 +4,11 @@
 // Runs under the org reusable CI as `node tests/screen.test.js`.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const path = require('node:path');
 const {
     createDocument,
     installBrowserHarness,
     advanceClock,
+    loadScreen,
     freshPlugin,
     initRendererWithHarness,
 } = require('./harness');
@@ -548,9 +548,7 @@ test('invalid persisted hand filter values safely fall back to Both', () => {
 
 test('hand filter buttons synchronize open panels and destroyed panels leave the registry', () => {
     const harness = installBrowserHarness();
-    const file = path.join(__dirname, '..', 'screen.js');
-    delete require.cache[require.resolve(file)];
-    const plugin = require(file);
+    const plugin = loadScreen();
     const renderers = [plugin._createFactory(), plugin._createFactory()];
 
     for (const renderer of renderers) {

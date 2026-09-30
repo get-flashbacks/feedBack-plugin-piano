@@ -26,7 +26,11 @@ These are three independent requirements — satisfying one does not imply the o
 
 Piano Highway declares a **minimum host of feedBack v0.3.0-alpha.1** — the first core commit whose `VERSION` file reads `0.3.0-alpha.1` (commit `803bd0c`), and the earliest snapshot whose source carries every API this plugin consumes. Core publishes no git tags, so `VERSION` (surfaced by core's version endpoint) is the identity to compare against.
 
-Every row below is required unless it says *optional*: optional rows are used best-effort behind a `typeof` guard, so a host that drops one degrades quietly instead of failing.
+Rows are grouped by what the plugin can *do* when the host provides them, not by whether a missing one would break the board — nearly every row is read behind a `typeof` or existence check, so a dropped API degrades a feature rather than the renderer:
+
+- **The board itself** — the factory global, the `setRenderer` lifecycle, `matchesArrangement` and the chart bundle fields. Without these the visualization does not appear at all.
+- **MIDI keyboard input** — the `midi-input` domain and the bus event that reconciles plugged/unplugged devices. Without these the board renders and scores, but there is no keyboard to play (see *Visualization-only fallback* below).
+- **Host chrome** — the event bus and its `highway:` events, `uiVersion` / `ui.playerControlSlot()`, and `window.highway.resize()` *(optional)*. These affect where the settings gear sits and when the overlay re-syncs, not what the board shows.
 
 | Host API | Used for |
 |---|---|
@@ -41,7 +45,7 @@ Every row below is required unless it says *optional*: optional rows are used be
 | `feedBack.uiVersion` + `feedBack.ui.playerControlSlot()` | Settings gear placement in the v3 player |
 | `window.highway.resize()` *(optional)* | Nudges the host's measure pass after the plugin changes player-control layout |
 
-`tests/host-compat.test.js` pins this floor as an executable contract: each fake host in that file reproduces every required row above, and the renderer must mount, draw, route MIDI, survive pause/seek/song changes, and tear down against it. The 13 tests run only against those fixtures, never against a live core; the evidence for `0.3.0-alpha.2` (`3a4dd7a`) is a source audit of the same APIs, whose surface is a superset of alpha.1's — the two `setRenderer` / `matchesArrangement` sites moved from `static/app.js` to `static/js/viz.js`, with no change to the published contract.
+`tests/host-compat.test.js` pins this floor as an executable contract: each fake host in that file reproduces the rows above, and the renderer must mount, draw, route MIDI, survive pause/seek/song changes, and tear down against it. The 13 tests run only against those fixtures, never against a live core; the evidence for `0.3.0-alpha.2` (`3a4dd7a`) is a source audit of the same APIs, whose surface is a superset of alpha.1's — the two `setRenderer` / `matchesArrangement` sites moved from `static/app.js` to `static/js/viz.js`, with no change to the published contract. `tools/verify-host-surface.js` re-checks that audit against a live core checkout on a schedule, so core drifting from this table fails loudly.
 
 This is a source-level compatibility floor, not a runtime certification of every historical snapshot: no test here claims that all builds older than alpha.1 fail, only that alpha.1 is the earliest one examined that provides everything the plugin needs.
 
