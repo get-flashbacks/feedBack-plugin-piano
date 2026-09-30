@@ -108,6 +108,9 @@ const SURFACE = [
     { name: 'toneChanges', paths: ['static/highway.js'], pattern: /b\.toneChanges|toneChanges\s*=/ },
     { name: 'toneBase', paths: ['static/highway.js'], pattern: /toneBase/ },
     { name: 'has_notation', paths: ['static/**/*.py', 'static/**/*.js', 'lib/**/*.py'], pattern: /has_notation/ },
+    // `songInfo.arrangement` is the top-level name matchesArrangement checks
+    // first, before falling back to the `arrangements` list.
+    { name: 'arrangement', paths: ['static/app.js', 'static/js/viz.js', 'static/highway.js', 'lib/**/*.py'], pattern: /arrangement/ },
     { name: 'arrangements', paths: ['static/**/*.js', 'lib/**/*.py'], pattern: /arrangements/ },
     { name: 'arrangement_index', paths: ['static/**/*.js', 'lib/**/*.py'], pattern: /arrangement_index/ },
     { name: 'highway:canvas-replaced', paths: ['static/highway.js', 'static/app.js', 'static/js/viz.js'], pattern: /highway:canvas-replaced/ },
