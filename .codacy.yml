@@ -1,3 +1,4 @@
+---
 # Codacy Static Code Analysis configuration.
 #
 # tools/ holds developer-only Node scripts that run in CI and locally. They are
@@ -17,5 +18,10 @@
 #
 # Excluding the path is preferred over inline suppressions so the reasoning
 # lives in one place. Nothing under tools/ reaches a user's page.
-exclude:
-  - path: 'tools/**/*.js'
+# These two suites read fixed repository files and create local temporary git
+# fixtures. Browser path-injection rules misclassify those trusted paths.
+# Keep production screen.js and other tests in analysis.
+exclude_paths:
+  - 'tools/**'
+  - 'tests/host-compat.test.js'
+  - 'tests/host-surface-checker.test.js'

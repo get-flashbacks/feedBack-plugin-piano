@@ -152,14 +152,10 @@ function readmeHostTable() {
 // the README the source of truth rather than a stale copy of it.
 function checkTableParity() {
     const table = readmeHostTable();
-    const missing = [];
-    for (const api of SURFACE) {
-        // The table uses `foo` for a bare name and backticks around it either
-        // way; just look for the name as a whole token.
-        if (!new RegExp('`[^`]*\\b' + api.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(table)) {
-            missing.push(api.name);
-        }
-    }
+    const tokens = [...table.matchAll(/`([^`]+)`/g)].map((match) =>
+        match[1].replace(/<[^>]*>/g, '').replace(/\(.*$/, ''));
+    const missing = SURFACE.filter((api) => !tokens.some((token) =>
+        token === api.name || token.endsWith('.' + api.name))).map((api) => api.name);
     if (missing.length) {
         console.error('README.md\'s host table does not name: ' + missing.join(', '));
         console.error('Add the row to README.md ("Requirements" → "1. Host") and a probe to SURFACE in tools/verify-host-surface.js.');
@@ -200,24 +196,19 @@ function listFiles(repo) {
         .filter((f) => !f.endsWith('.min.js'));
 }
 
-// A probe's `paths` globs, resolved against the files core actually has. The
-// two globs core's own layout can take (`static/highway.js` and
-// `static/**/*.js`) are expanded here rather than in the probes so a probe
-// stays a one-liner.
+// Probes use exact paths or a recursive directory prefix plus extension.
+// Compare those strings directly rather than compiling dynamic regexes.
+function matchesPath(glob, file) {
+    const marker = glob.indexOf('/**/');
+    if (marker === -1) return glob === file;
+    const prefix = glob.slice(0, marker + 1);
+    const suffix = glob.slice(marker + 4);
+    if (!suffix.startsWith('*.')) throw new Error('unsupported probe glob: ' + glob);
+    return file.startsWith(prefix) && file.endsWith(suffix.slice(1));
+}
+
 function resolvePaths(api, files) {
-    const out = new Set();
-    for (const glob of api.paths) {
-        // A sentinel, not a character, so the intermediate replace() calls
-        // can't rewrite each other's output.
-        const DOUBLE_STAR = '<<DOUBLE_STAR>>';
-        const re = new RegExp('^' + glob
-            .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-            .replace(/\*\*\//g, DOUBLE_STAR)
-            .replace(/\*/g, '[^/]*')
-            .replace(new RegExp(DOUBLE_STAR, 'g'), '.*') + '$');
-        for (const file of files) if (re.test(file)) out.add(file);
-    }
-    return [...out];
+    return files.filter((file) => api.paths.some((glob) => matchesPath(glob, file)));
 }
 
 function probeAll(repo, files) {
@@ -235,6 +226,66 @@ function probeAll(repo, files) {
     return results;
 }
 
+function requestedRefs(args) {
+    const index = args.indexOf('--ref');
+    if (index === -1) {
+        return [...AUDITED_REFS, { ref: 'main', version: null, role: 'current upstream main' }];
+    }
+    const ref = args[index + 1];
+    if (!ref || ref.startsWith('-')) throw new Error('--ref requires a ref value');
+    return [{ ref, version: null, role: 'requested via --ref' }];
+}
+
+function checkVersion(repo, audit) {
+    const live = git(['show', 'HEAD:VERSION'], repo).trim();
+    if (audit.version && live !== audit.version) {
+        console.error('VERSION at ' + audit.ref + ' is ' + live + ', expected ' + audit.version);
+        return false;
+    }
+    console.log('VERSION ' + live + ' (' + audit.role + ')');
+    return true;
+}
+
+function reportProbe(result) {
+    let status = 'MISS';
+    if (result.optional) status = 'warn';
+    if (result.hit) status = 'ok  ';
+    let detail = '';
+    if (result.hit) detail = '  (' + result.hit + ')';
+    else if (!result.searched) detail = '  (no file matched the probe path — has core moved it?)';
+    console.log('  ' + status + '  ' + result.name + detail);
+}
+
+function reportMissing(ref, results) {
+    const missing = results.filter((result) => !result.hit);
+    const required = missing.filter((result) => !result.optional);
+    const optional = missing.filter((result) => result.optional);
+    if (required.length) {
+        console.error('\n' + ref + ': ' + required.length + ' required host API(s) not found: '
+            + required.map((result) => result.name).join(', '));
+        console.error('Either core drifted from the surface README.md declares, or the probe path needs updating.');
+    }
+    if (optional.length) {
+        console.warn(ref + ': optional surface absent: ' + optional.map((result) => result.name).join(', '));
+    }
+    return required.length === 0;
+}
+
+function auditRef(repo, audit) {
+    console.log('\n== ' + audit.ref + ' (' + audit.role + ')');
+    try {
+        checkout(repo, audit.ref);
+    } catch (error) {
+        console.error('could not check out ' + audit.ref + ':\n' + String(error.stderr || error.message).trim());
+        return false;
+    }
+    const versionMatches = checkVersion(repo, audit);
+    const results = probeAll(repo, listFiles(repo));
+    results.forEach(reportProbe);
+    const surfaceMatches = reportMissing(audit.ref, results);
+    return versionMatches && surfaceMatches;
+}
+
 function main() {
     if (process.argv.includes('--list')) {
         for (const api of SURFACE) {
@@ -242,63 +293,15 @@ function main() {
         }
         return;
     }
-    if (!checkTableParity()) process.exitCode = 1;
-
-    const only = (() => {
-        const i = process.argv.indexOf('--ref');
-        return i === -1 ? null : process.argv[i + 1];
-    })();
-    const refs = only
-        ? [{ ref: only, version: null, role: 'requested via --ref' }]
-        : [...AUDITED_REFS, { ref: 'main', version: null, role: 'current upstream main' }];
-
+    const tableMatches = checkTableParity();
+    const refs = requestedRefs(process.argv);
     withCore((repo) => {
-        let failed = process.exitCode === 1;
-        for (const { ref, version, role } of refs) {
-            console.log('\n== ' + ref + (version ? ' (VERSION ' + version + ', ' + role + ')' : ''));
-            let checkoutError = null;
-            try { checkout(repo, ref); } catch (e) { checkoutError = e.stderr || e.message; }
-            if (checkoutError) {
-                // An unreachable ref must not read as "the surface drifted".
-                console.error('could not check out ' + ref + ':\n' + String(checkoutError).trim());
-                process.exitCode = 1;
-                failed = true;
-                continue;
-            }
-
-            const files = listFiles(repo);
-            const live = fs.readFileSync(path.join(repo, 'VERSION'), 'utf8').trim();
-            if (version && live !== version) {
-                console.error('VERSION at ' + ref + ' is ' + live + ', expected ' + version);
-                failed = true;
-            } else if (version) {
-                console.log('VERSION ' + live + ' matches the declared value');
-            } else {
-                console.log('VERSION ' + live + ' (' + role + ')');
-            }
-
-            const results = probeAll(repo, files);
-            const missing = results.filter((r) => !r.hit);
-            for (const r of results) {
-                console.log('  ' + (r.hit ? 'ok  ' : (r.optional ? 'warn' : 'MISS')) + '  ' + r.name
-                    + (r.hit ? '  (' + r.hit + ')' : (r.searched ? '' : '  (no file matched the probe path — has core moved it?)')));
-            }
-            const hard = missing.filter((r) => !r.optional);
-            if (hard.length) {
-                console.error('\n' + ref + ': ' + hard.length + ' required host API(s) not found: '
-                    + hard.map((r) => r.name).join(', '));
-                console.error('Either core drifted from the surface README.md declares, or the probe path needs updating.');
-                failed = true;
-            }
-            const soft = missing.filter((r) => r.optional);
-            if (soft.length) {
-                console.warn(ref + ': optional surface absent: ' + soft.map((r) => r.name).join(', '));
-            }
-        }
-        if (failed) process.exitCode = 1;
+        // Map first so all refs are audited even after one fails.
+        const results = refs.map((audit) => auditRef(repo, audit));
+        if (!tableMatches || results.includes(false)) process.exitCode = 1;
         else console.log('\nhost surface intact at every checked ref');
     });
 }
 
 if (require.main === module) main();
-module.exports = { AUDITED_REFS, SURFACE, listFiles, resolvePaths, probeAll, main };
+module.exports = { AUDITED_REFS, SURFACE, listFiles, resolvePaths, probeAll, requestedRefs, main };

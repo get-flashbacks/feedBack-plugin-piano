@@ -43,3 +43,18 @@ test('file discovery includes first-party Python and excludes vendor and minifie
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });
+
+
+test('default audit includes current main and explicit refs require a value', () => {
+    assert.deepEqual(checker.requestedRefs([]).map((audit) => audit.ref),
+        [...checker.AUDITED_REFS.map((audit) => audit.ref), 'main']);
+    assert.deepEqual(checker.requestedRefs(['--ref', 'custom']).map((audit) => audit.ref), ['custom']);
+    assert.throws(() => checker.requestedRefs(['--ref']), /requires a ref value/);
+});
+
+test('recursive probe paths cover root and nested files without matching other extensions', () => {
+    const files = ['static/app.js', 'static/js/viz.js', 'static/js/viz.json', 'lib/song.py'];
+    assert.deepEqual(checker.resolvePaths({ paths: ['static/**/*.js'] }, files), files.slice(0, 2));
+    assert.deepEqual(checker.resolvePaths({ paths: ['lib/**/*.py'] }, files), ['lib/song.py']);
+    assert.deepEqual(checker.resolvePaths({ paths: ['static/app.js'] }, files), ['static/app.js']);
+});

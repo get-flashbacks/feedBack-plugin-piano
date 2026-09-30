@@ -517,7 +517,7 @@ test('every API screen.js reads off a host global has a probe', () => {
         assert.ok(toolSrc.includes(event), `screen.js subscribes to '${event}' with no probe`);
     }
     for (const method of ['discover', 'listSources', 'open', 'close']) {
-        assert.ok(new RegExp('mi\\.' + method + '\\(').test(screen), `screen.js calls mi.${method}()`);
+        assert.ok(screen.includes('mi.' + method + '('), `screen.js calls mi.${method}()`);
         assert.ok(toolSrc.includes("name: '" + method + "'"), `mi.${method}() has no probe`);
     }
 });
