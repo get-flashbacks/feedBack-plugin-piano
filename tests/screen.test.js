@@ -1,7 +1,7 @@
 'use strict';
 // Coverage for pure helpers in screen.js: MIDI/note math, WebAudioFont
 // naming, saved-MIDI-source resolution, and arrangement matching.
-// Runs under the org reusable CI as `node tests/screen.test.js`.
+// Runs under the org reusable CI, which globs `tests/*.test.js`.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
