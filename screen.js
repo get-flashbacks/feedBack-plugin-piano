@@ -1336,9 +1336,17 @@ function _ssActive() {
     // initialised last instead of the one the user is looking at, and
     // panel chrome / the settings gear fall back to the whole-player
     // mount and the shared control rail — N panels stack N overlays
-    // and N gears in the same place. Nothing on a partial surface is
-    // half-consumed, which is the point: the check is all-or-nothing
-    // precisely because half a focus API cannot route MIDI.
+    // and N gears in the same place.
+    //
+    // The three wrappers below are gated on this, so they are
+    // all-or-nothing: half a focus API cannot route MIDI, and a partial
+    // surface is never asked for chrome, anchoring or focus. The
+    // subscribe/unsubscribe pair is NOT gated here — init() and
+    // destroy() check only that both halves exist, because what they
+    // have to guarantee is symmetry (never subscribe without a way to
+    // release), and a listener that fires while every panel reports
+    // itself focused changes nothing. Both partial shapes are pinned by
+    // their own fixtures in tests/host-compat.test.js.
     return typeof ss.isCanvasFocused === 'function'
         && typeof ss.panelChromeFor === 'function'
         && typeof ss.settingsAnchorFor === 'function'

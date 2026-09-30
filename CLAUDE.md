@@ -122,10 +122,15 @@ actually changes under a real split-panel host:
   `_createSettingsPanel`) and the gear docks in `ui.playerControlSlot()` /
   `#player-controls` (`_injectSettingsGear`) — N panels stack N overlays and
   N gears in the same place.
-- **Nothing is half-consumed.** Only `isActive()` is ever called against a
-  partial surface, because half a focus API cannot route MIDI. Pinned by the
-  partial-surface fixture in `tests/host-compat.test.js`.
-
+- **Chrome and focus are all-or-nothing.** `_ssActive()` gates the three
+  wrappers, so a partial surface is never asked for chrome, anchoring or
+  focus — only `isActive()` is called for those. The subscribe/unsubscribe
+  pair is *not* gated on `_ssActive()`: `init()`/`destroy()` check only that
+  both halves exist, so a surface missing something *other* than
+  `offFocusChange` still subscribes (and still releases, symmetrically). What
+  that pair has to guarantee is symmetry, not authority — a listener firing
+  while every panel reports itself focused changes nothing. Pinned by both
+  partial-surface fixtures in `tests/host-compat.test.js`, one per shape.
 - **Subscribe** — `init()` calls `ss.onFocusChange(_onFocusChange)` only
   when *both* `onFocusChange` and `offFocusChange` exist on the helper. A
   subscribe without a matching unsubscribe path would leak the listener
