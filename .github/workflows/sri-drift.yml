@@ -1,0 +1,22 @@
+name: sri-drift
+
+# The SRI pins in screen.js can only be checked against the bytes upstream
+# actually serves, so validating them needs the network. Gating every PR on that
+# would just flake on transient upstream or DNS failures, so drift is checked on
+# a schedule (and on demand) while `node --test` keeps the network-free shape
+# assertions in tests/screen.test.js as the per-PR gate.
+on:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+jobs:
+  verify-sri:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Re-hash the SRI pins against upstream
+        run: node tools/verify-sri.js

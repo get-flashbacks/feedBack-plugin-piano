@@ -443,13 +443,14 @@ const WAF_SF = 'JCLive_sf2_file';
 // JS into this plugin's page. The host serves `Access-Control-Allow-Origin: *`,
 // which the `crossorigin="anonymous"` attribute requires.
 //
-// Hashes are `sha384-<base64>` over the exact response bytes, computed with:
-//
-//   curl -sS <url> | openssl dgst -sha384 -binary | openssl base64 -A
-//
-// They're pinned to whatever upstream served when this table was generated, so
-// they must be regenerated whenever the WebAudioFont version or the upstream
-// soundfont data is intentionally bumped -- otherwise the browser refuses to
+// Hashes are `sha384-<base64>` over the exact response bytes. Regenerate them
+// with `node tools/verify-sri.js --write`; the same script without `--write`
+// re-hashes and diffs without writing, which is how a wrong row or an upstream
+// republish gets caught before it ships — `.github/workflows/sri-drift.yml` runs
+// it on a schedule, since only a fetch can tell a correct digest from a
+// well-formed wrong one. The pins hold only for what upstream served at
+// generation time, so they must be bumped alongside any intentional
+// WebAudioFont or soundfont-data update — otherwise the browser refuses to
 // execute the script (SRI mismatch fails closed, and the synth stays silent).
 const WAF_PLAYER_INTEGRITY = 'sha384-u9j1bRdszX//ffJaXiy9yaP+k/fSlI9bwXtVQQ+fhplWIxNS7VYFuiWKCSGvAXii';
 
@@ -497,7 +498,7 @@ const WAF_SOUNDFONT_INTEGRITY = {
      36: 'sha384-3u9H/V3wawJ/ns6Rhn8YM1xT8tsFWvsZs5xPYwa3aFVdCHJNtA9utjxDjJ91Ngfh',
      37: 'sha384-yxCfc+4ew5P+JfBSjNF6UXcHfa8q9MThUNvNtVqe9orGzAMgnfutnemJo9bVqujn',
      38: 'sha384-1EL3jzsnqon+fu21hItH4U8cghiKvQN7LQpF+pxnHOL3UpaPYqPvNU8EssOAw3jc',
-     39: 'sha384-Hx3TDHKZ72fbMK8KpzDKkelQM7ETeBYCPX6K5/XrrO60aNga0sDSsYpTPsArpYYh',
+     39: 'sha384-Hx3TDHKZ72fbMK8KpzDKdelQM7ETeBYCPX6K5/XrrO60aNga0sDSsYpTPsArpYYh',
      40: 'sha384-MLJgNlN53zZSzycGhZP6O9wxglErW4P84tgryQOS790pnOQ3VhthrlgNVOF08iPg',
      41: 'sha384-yquZM4LS2oXMK4tBdMg1M0PLKDoWkzsIktfv8EnPp+R3sNPT4QTZkL8cnY+qDekR',
      42: 'sha384-y7tVyLaJ9pxLkGHYhi0XzaiUPf+dvLfzJAV0V3KHM35S/m9UPN6pvf+eJ+cGcF/T',
@@ -684,7 +685,13 @@ function _loadScript(url, integrity) {
             s.crossOrigin = 'anonymous';
         }
         s.onload = resolve;
-        s.onerror = () => reject(new Error('Failed to load ' + url));
+        // A failed tag is dropped so the next caller's dedup lookup misses and it
+        // gets a real attempt instead of short-circuiting onto this dead one —
+        // with an SRI mismatch that's a permanent failure, not a network blip.
+        s.onerror = () => {
+            s.remove();
+            reject(new Error('Failed to load ' + url));
+        };
         document.head.appendChild(s);
     });
 }
@@ -3204,6 +3211,7 @@ if (typeof module !== 'undefined' && module.exports) {
         noteToMidi, midiToNoteName, isBlackKey, _neonRGB, _rgbStr,
         _wafFile, _wafVar, _wafUrl, _midiResolveSaved, _computeOctaveShift, _nearTermMidiRange,
         WAF_PLAYER_URL, WAF_PLAYER_INTEGRITY, WAF_SOUNDFONT_INTEGRITY, INSTRUMENTS,
+        _loadScript,
         _normalizeHand, _notePassesHandFilter, _approachAlpha,
         _rangeMismatchSummary, _nearTermMismatchSummary,
         _programChangeInstrumentIndex, _pitchBendSemitones,
